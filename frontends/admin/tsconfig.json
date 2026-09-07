@@ -13,10 +13,9 @@
     "moduleDetection": "force",
     "noEmit": true,
 
-    /* Path mapping */
-    "baseUrl": ".",
+    /* Path mapping (TS7: baseUrl removed -- paths are project-relative) */
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
 
     /* Linting */
