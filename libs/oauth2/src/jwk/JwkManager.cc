@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <utility>
 #include <cstring>
 
 namespace fulla::oauth2
@@ -258,15 +259,22 @@ bool JwkManager::loadKeystoreDir(const std::string &dir)
     }
 
     // Collect <kid>.pem candidates (sorted for deterministic load/JWKS order).
-    std::vector<std::string> kids;
+    // PR #176 review NIT: case-insensitive suffix match so a hand-named
+    // <kid>.PEM (Windows habit) is not silently skipped; the kid itself keeps
+    // the filename's case. Convention: lowercase .pem extension.
+    std::vector<std::pair<std::string, std::string>> kids;  // (kid, actual filename)
     for (const auto &item : fs::directory_iterator(fs::path(dir), ec))
     {
         if (!item.is_regular_file())
             continue;
         const std::string filename = item.path().filename().string();
-        if (filename.size() <= 4 || filename.substr(filename.size() - 4) != ".pem")
+        if (filename.size() <= 4)
             continue;
-        kids.push_back(filename.substr(0, filename.size() - 4));
+        std::string suffix = filename.substr(filename.size() - 4);
+        std::transform(suffix.begin(), suffix.end(), suffix.begin(), ::tolower);
+        if (suffix != ".pem")
+            continue;
+        kids.emplace_back(filename.substr(0, filename.size() - 4), filename);
     }
     std::sort(kids.begin(), kids.end());
     if (kids.empty())
@@ -290,18 +298,26 @@ bool JwkManager::loadKeystoreDir(const std::string &dir)
     }
     std::string activeKid;
     std::getline(activeFile, activeKid);
-    // Trim CR/whitespace for hand-edited markers.
-    while (
-      !activeKid.empty() &&
-      (activeKid.back() == '\r' || activeKid.back() == ' ' || activeKid.back() == '\t'))
+    // Trim CR/whitespace on BOTH ends for hand-edited markers (convention:
+    // the kid starts at column 0; leading whitespace would otherwise silently
+    // mismatch -- PR #176 review NIT).
+    const auto isSpace = [](char c) {
+        return c == '\r' || c == ' ' || c == '\t';
+    };
+    while (!activeKid.empty() && isSpace(activeKid.back()))
         activeKid.pop_back();
+    while (!activeKid.empty() && isSpace(activeKid.front()))
+        activeKid.erase(activeKid.begin());
 
     std::vector<KeyEntry> loaded;
-    for (const auto &kid : kids)
+    for (const auto &[kid, actualName] : kids)
     {
         if (kid.empty())
             continue;
-        std::ifstream pemFile(fs::path(dir) / (kid + ".pem"));
+        // Open the ACTUAL filename (the suffix check is case-insensitive, so
+        // it may be .PEM; on a case-sensitive FS opening kid+".pem" would
+        // miss it).
+        std::ifstream pemFile(fs::path(dir) / actualName);
         // PR #176 review MINOR-2: an unopenable .pem is a hard failure, not a
         // skip -- silently dropping the NEW key would no-op rotation step 1
         // ("Publish") and only surface when step 2 flips active_kid.
@@ -311,7 +327,7 @@ bool JwkManager::loadKeystoreDir(const std::string &dir)
                 EVP_PKEY_free(static_cast<EVP_PKEY *>(e.pkey));
             log(
               fulla::common::ports::LogLevel::Error,
-              "JwkManager: keystore " + dir + "/" + kid + ".pem cannot be opened"
+              "JwkManager: keystore " + dir + "/" + actualName + " cannot be opened"
             );
             return false;
         }

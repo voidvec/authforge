@@ -251,6 +251,23 @@ DROGON_TEST(Unit_P0_ConfigManager_Production_ConfigOidcKeyPath_Passes)
     CHECK(fulla::common::config::ConfigManager::validate(config, errMsg) == true);
 }
 
+// #110-B (PR #176 review MINOR): the keystore directory is a complete key
+// source on its own -- rotation deployments use nothing else, so the
+// production gate must accept it (a misconfigured keystore then hard-fails
+// later in JwkManager::init with the directory-specific error, which is the
+// intended diagnostics point).
+DROGON_TEST(Unit_P0_ConfigManager_Production_ConfigOidcKeystoreDir_Passes)
+{
+    ProductionEnvGuard env;
+    Json::Value config = productionBaseConfig();
+    Json::Value plugin;
+    plugin["name"] = "OAuth2Plugin";
+    plugin["config"]["oidc"]["signing_keystore_dir"] = "/etc/fulla/keystore";
+    config["plugins"].append(plugin);
+    std::string errMsg;
+    CHECK(fulla::common::config::ConfigManager::validate(config, errMsg) == true);
+}
+
 DROGON_TEST(Unit_P0_ConfigManager_Production_WeakConfidentialClientSecret_Fails)
 {
     ProductionEnvGuard env;
