@@ -13,6 +13,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     id_token_hint: str | Unset = UNSET,
+    client_id: str | Unset = UNSET,
     post_logout_redirect_uri: str | Unset = UNSET,
     state: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -20,6 +21,8 @@ def _get_kwargs(
     params: dict[str, Any] = {}
 
     params["id_token_hint"] = id_token_hint
+
+    params["client_id"] = client_id
 
     params["post_logout_redirect_uri"] = post_logout_redirect_uri
 
@@ -74,6 +77,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     id_token_hint: str | Unset = UNSET,
+    client_id: str | Unset = UNSET,
     post_logout_redirect_uri: str | Unset = UNSET,
     state: str | Unset = UNSET,
 ) -> Response[Any | ErrorEnvelope | MessageResponse]:
@@ -85,6 +89,7 @@ def sync_detailed(
 
     Args:
         id_token_hint (str | Unset):
+        client_id (str | Unset):
         post_logout_redirect_uri (str | Unset):
         state (str | Unset):
 
@@ -98,6 +103,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id_token_hint=id_token_hint,
+        client_id=client_id,
         post_logout_redirect_uri=post_logout_redirect_uri,
         state=state,
     )
@@ -113,6 +119,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     id_token_hint: str | Unset = UNSET,
+    client_id: str | Unset = UNSET,
     post_logout_redirect_uri: str | Unset = UNSET,
     state: str | Unset = UNSET,
 ) -> Any | ErrorEnvelope | MessageResponse | None:
@@ -124,6 +131,7 @@ def sync(
 
     Args:
         id_token_hint (str | Unset):
+        client_id (str | Unset):
         post_logout_redirect_uri (str | Unset):
         state (str | Unset):
 
@@ -138,6 +146,7 @@ def sync(
     return sync_detailed(
         client=client,
         id_token_hint=id_token_hint,
+        client_id=client_id,
         post_logout_redirect_uri=post_logout_redirect_uri,
         state=state,
     ).parsed
@@ -147,6 +156,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     id_token_hint: str | Unset = UNSET,
+    client_id: str | Unset = UNSET,
     post_logout_redirect_uri: str | Unset = UNSET,
     state: str | Unset = UNSET,
 ) -> Response[Any | ErrorEnvelope | MessageResponse]:
@@ -158,6 +168,7 @@ async def asyncio_detailed(
 
     Args:
         id_token_hint (str | Unset):
+        client_id (str | Unset):
         post_logout_redirect_uri (str | Unset):
         state (str | Unset):
 
@@ -171,6 +182,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id_token_hint=id_token_hint,
+        client_id=client_id,
         post_logout_redirect_uri=post_logout_redirect_uri,
         state=state,
     )
@@ -184,6 +196,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     id_token_hint: str | Unset = UNSET,
+    client_id: str | Unset = UNSET,
     post_logout_redirect_uri: str | Unset = UNSET,
     state: str | Unset = UNSET,
 ) -> Any | ErrorEnvelope | MessageResponse | None:
@@ -195,6 +208,7 @@ async def asyncio(
 
     Args:
         id_token_hint (str | Unset):
+        client_id (str | Unset):
         post_logout_redirect_uri (str | Unset):
         state (str | Unset):
 
@@ -210,6 +224,7 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             id_token_hint=id_token_hint,
+            client_id=client_id,
             post_logout_redirect_uri=post_logout_redirect_uri,
             state=state,
         )

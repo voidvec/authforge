@@ -9,6 +9,18 @@ For the versioning policy (when to cut, what to bump, why), see
 [Versioning & Release](docs/contribute/versioning-and-release.md).
 Changelog entries are written in English (see CONTRIBUTING).
 
+## [Unreleased]
+
+### Changed
+
+- **⚠️ Breaking (admin API) — `GET /api/admin/oidc/keys` reports the live signing keystore (#110)**: the flat `kid`/`kty`/`alg`/`use`/`key_status` fields are replaced by a `keys[]` array (per-key `kid`/`kty`/`alg`/`use` plus `status`: `active` = signs new tokens, `published` = verification-only during a rotation grace window), `active_kid`, and `key_count`. External admin integrations should read the signing key material from `/.well-known/jwks.json` as before; this endpoint now summarizes rotation state.
+- `POST /oauth2/end_session` (like GET) accepts `client_id` as the RP identification when `id_token_hint` is absent (#88): the `post_logout_redirect_uri` must still be registered for that client.
+
+### Added
+
+- Signing-key rotation keystore (#110): `plugins.OAuth2Plugin.config.oidc.signing_keystore_dir` (`<kid>.pem` files + `active_kid` marker); JWKS publishes every loaded key, verification routes on the JWT `kid`, rotation is a documented three-restart procedure (see `docs/operate/configuration-guide.md` §9).
+- Coverage ratchet gate (#105): CI fails when any library's line coverage drops more than 0.5pp below `tools/coverage/ratchet-baseline.json`; re-baselining is a deliberate reviewed PR edit.
+
 ## [1.1.0] - 2026-09-01
 
 ### Security

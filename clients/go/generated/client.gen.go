@@ -943,6 +943,9 @@ type PostOauth2EndSessionParams struct {
 	// IdTokenHint Previously issued id_token hint (signature-verified,
 	IdTokenHint *string `form:"id_token_hint,omitempty" json:"id_token_hint,omitempty"`
 
+	// ClientId RP self-identification when id_token_hint is absent (RP-Initiated Logout 1.0 §2.1). The post_logout_redirect_uri must be registered for this client (#88-3).
+	ClientId *string `form:"client_id,omitempty" json:"client_id,omitempty"`
+
 	// PostLogoutRedirectUri Registered post-logout redirect URI.
 	PostLogoutRedirectUri *string `form:"post_logout_redirect_uri,omitempty" json:"post_logout_redirect_uri,omitempty"`
 
@@ -6907,6 +6910,18 @@ func NewPostOauth2EndSessionRequest(server string, params *PostOauth2EndSessionP
 		if params.IdTokenHint != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id_token_hint", *params.IdTokenHint, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ClientId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_id", *params.ClientId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

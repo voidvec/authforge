@@ -17,11 +17,16 @@ Output modes:
              decision B): FAIL (exit 1) when a library's coverage drops more
              than RATCHET_TOLERANCE_PP below its baseline. Anti-flake rules:
                * compare trunc-to-0.1pp(current) vs baseline - tolerance;
-               * libraries with fewer than MIN_LINES instrumented lines are
-                 exempt (timing-dependent tests flap a few lines, which a
-                 0.5pp band absorbs on 1k+ line libs but not on tiny ones);
-               * a baseline lib missing from the current run FAILS (lost
-                 instrumentation is never a pass);
+               * exemption is keyed on the BASELINE total: only libraries
+                 with fewer than MIN_LINES instrumented lines IN THE
+                 BASELINE are exempt. Keying on the current run's total
+                 would let a data collapse (test crash / partial
+                 instrumentation) shrink a big library below the threshold
+                 and slip through the exemption (PR #176 review);
+               * a baseline lib missing from the current run, or whose
+                 current total collapses below MIN_LINES while its baseline
+                 total was >= MIN_LINES, FAILS (lost instrumentation is
+                 never a pass);
                * a NEW lib (not in baseline) passes (baseline catches it on
                  the next deliberate --update run).
              When the baseline file does not exist, the gate runs in SEED
@@ -131,9 +136,17 @@ def ratchet_gate(path):
             )
             continue
         base_pct = float(entry["pct"])
-        if tot[lib] < MIN_LINES:
+        base_total = int(entry.get("total", 0))
+        if base_total < MIN_LINES:
             notes.append(
-                f"[ratchet] exempt {lib}: {tot[lib]} instrumented lines < {MIN_LINES}"
+                f"[ratchet] exempt {lib}: baseline total {base_total} lines < {MIN_LINES}"
+            )
+            continue
+        if tot[lib] < MIN_LINES:
+            violations.append(
+                f"[ratchet] FAIL {lib}: instrumented lines collapsed from baseline "
+                f"{base_total} to {tot[lib]} (< {MIN_LINES}) -- partial instrumentation "
+                f"or a crashed test run, not a coverage improvement"
             )
             continue
         # trunc-to-0.1pp of the current run vs baseline minus tolerance
