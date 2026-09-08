@@ -1,0 +1,10 @@
+{
+  // Production build config (#160): the frontend-runtime Docker image builds
+  // in an isolated context that copies ONLY frontends/user/ — the cross-app
+  // parity tests (i18nKeys.test.ts, crossAppConsistency.property.test.ts)
+  // dynamically import ../../../admin/** and cannot type-check there. Tests
+  // stay type-checked in the repo via the base tsconfig (IDE + vitest); the
+  // image build checks the shipped sources.
+  "extends": "./tsconfig.json",
+  "exclude": ["src/**/*.test.ts", "src/**/*.spec.ts"]
+}
