@@ -90,6 +90,13 @@ jobs:
   frontend:
     name: Frontend Property Tests
     uses: ./.github/workflows/_frontend.yml
+    # Ceiling for the called reusable workflow: #160's frontend-image-smoke
+    # job reads PR changed-files (dorny/paths-filter API on pull_request),
+    # which needs pull-requests: read — callers grant it, nested jobs cannot
+    # escalate above what the caller allows.
+    permissions:
+      contents: read
+      pull-requests: read
 
   # --- MAIN gate --------------------------------------------------------------
   build-test:
