@@ -3,7 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import DData from '../../components/ui/DData.vue'
 
 const { t } = useI18n()
@@ -15,7 +16,15 @@ const saving = ref(false)
 const savingScopes = ref(false)
 const activeTab = ref<'info' | 'auth' | 'scopes' | 'credentials'>('info')
 const successMessage = ref('')
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (parameterized chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 // Client data
 const client = ref<any>({})
@@ -54,10 +63,10 @@ function showSuccess(msg: string) {
   setTimeout(() => { successMessage.value = '' }, 3000)
 }
 
-function showError(msg: string) {
+function showError(msg: NormalizedError | string) {
   errorMessage.value = msg
   successMessage.value = ''
-  setTimeout(() => { errorMessage.value = '' }, 5000)
+  setTimeout(() => { errorMessage.value = null }, 5000)
 }
 
 async function fetchClient() {
@@ -73,7 +82,7 @@ async function fetchClient() {
     editBackchannelLogoutUri.value = resp.data.backchannel_logout_uri || ''
     clientScopes.value = resp.data.scopes || []
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     loading.value = false
   }
@@ -126,7 +135,7 @@ async function saveChanges() {
     showSuccess(t('admin.applications.changesSaved'))
     await fetchClient()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -143,7 +152,7 @@ async function saveScopes() {
     clientScopes.value = resp.data.scopes || clientScopes.value
     showSuccess(t('admin.applications.scopesUpdated'))
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     savingScopes.value = false
   }
@@ -156,7 +165,7 @@ async function resetSecret() {
     newClientSecret.value = resp.data.client_secret || ''
     showSecretModal.value = true
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -201,10 +210,10 @@ onMounted(() => {
       {{ successMessage }}
     </div>
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-4 p-3 bg-error-50 border border-error-200 text-error-700 rounded-md text-sm"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </div>
 
     <!-- Loading -->

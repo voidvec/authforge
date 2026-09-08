@@ -5,8 +5,11 @@
  * `ui.*` must resolve identically in frontends/admin (byte-synced
  * `components/ui` consumers).
  * English is the source of truth: values are the original UI copy, verbatim.
+ *
+ * #159: default export (unplugin-vue-i18n precompiles `include`d resources
+ * that default-export the messages object) — keep it a plain static literal.
  */
-export const en = {
+export default {
   ui: {
     locale: {
       label: 'Language',

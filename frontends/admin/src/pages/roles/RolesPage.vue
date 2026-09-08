@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 
 const { t } = useI18n()
 
@@ -13,7 +14,15 @@ const showEditModal = ref(false)
 const selectedRole = ref<any>(null)
 const saving = ref(false)
 const successMessage = ref('')
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (parameterized chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 const newRoleName = ref('')
 const newRoleDescription = ref('')
@@ -21,13 +30,13 @@ const editDescription = ref('')
 
 function showSuccess(msg: string) {
   successMessage.value = msg
-  errorMessage.value = ''
+  errorMessage.value = null
   setTimeout(() => { successMessage.value = '' }, 3000)
 }
-function showError(msg: string) {
+function showError(msg: NormalizedError | string) {
   errorMessage.value = msg
   successMessage.value = ''
-  setTimeout(() => { errorMessage.value = '' }, 5000)
+  setTimeout(() => { errorMessage.value = null }, 5000)
 }
 
 async function fetchRoles() {
@@ -36,7 +45,7 @@ async function fetchRoles() {
     const resp = await axios.get('/api/admin/roles')
     roles.value = resp.data.roles || []
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     loading.value = false
   }
@@ -56,7 +65,7 @@ async function createRole() {
     newRoleDescription.value = ''
     await fetchRoles()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -79,7 +88,7 @@ async function updateRole() {
     showEditModal.value = false
     await fetchRoles()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -92,7 +101,7 @@ async function deleteRole(role: any) {
     showSuccess(t('admin.roles.deleted', { name: role.name }))
     await fetchRoles()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -122,10 +131,10 @@ onMounted(fetchRoles)
       {{ successMessage }}
     </div>
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-4 p-3 bg-error-50 border border-error-200 text-error-700 rounded-md text-sm"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </div>
 
     <div

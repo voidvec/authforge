@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import { useAuthStore } from '../../stores/auth'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 
 const { t } = useI18n()
 
@@ -29,7 +30,15 @@ userCode.value = initialCode
 
 const approving = ref(false)
 const success = ref(false)
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 function normalizeCode(): string {
   return userCode.value.trim().toUpperCase()
@@ -40,7 +49,7 @@ async function approve() {
   if (!code) return
   approving.value = true
   success.value = false
-  errorMessage.value = ''
+  errorMessage.value = null
   try {
     const resp = await axios.post('/oauth2/device/approve', new URLSearchParams({
       user_code: code,
@@ -55,7 +64,7 @@ async function approve() {
       errorMessage.value = t('admin.devices.notApproved')
     }
   } catch (e: unknown) {
-    errorMessage.value = normalizeError(e).message
+    errorMessage.value = normalizeError(e)
   } finally {
     approving.value = false
   }
@@ -88,12 +97,12 @@ async function approve() {
       </div>
 
       <div
-        v-if="errorMessage"
+        v-if="errorText"
         class="rounded-lg bg-error-50 border border-error-200 p-4 mb-4"
         data-testid="device-approve-error"
       >
         <p class="text-sm text-error-700">
-          {{ errorMessage }}
+          {{ errorText }}
         </p>
       </div>
 

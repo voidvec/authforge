@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
-import { normalizeError } from '@/services/errorAdapter'
+import { normalizeError, type NormalizedError } from '@/services/errorAdapter'
+import { getErrorMessage } from '@/services/messages'
 import DData from '@/components/ui/DData.vue'
 
 const scopes = ref<any[]>([])
 const loading = ref(true)
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText / oidcErrorText) so switching locale re-translates
+// text already on screen.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 interface OidcKeyInfo {
   kid: string
@@ -21,18 +30,23 @@ interface OidcKeyInfo {
 
 const oidcKeys = ref<OidcKeyInfo | null>(null)
 const oidcLoading = ref(true)
-const oidcErrorMessage = ref('')
+const oidcErrorMessage = ref<NormalizedError | string | null>(null)
+const oidcErrorText = computed(() => {
+  const e = oidcErrorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const copySuccess = ref('')
 
 async function fetchScopes() {
   loading.value = true
-  errorMessage.value = ''
+  errorMessage.value = null
   try {
     const resp = await axios.get('/api/admin/scopes')
     scopes.value = resp.data.scopes || []
   } catch (e) {
     const normalized = normalizeError(e)
-    errorMessage.value = normalized.message
+    errorMessage.value = normalized
     console.error('Failed to fetch scopes:', e)
   } finally {
     loading.value = false
@@ -41,13 +55,13 @@ async function fetchScopes() {
 
 async function fetchOidcKeys() {
   oidcLoading.value = true
-  oidcErrorMessage.value = ''
+  oidcErrorMessage.value = null
   try {
     const resp = await axios.get('/api/admin/oidc/keys')
     oidcKeys.value = resp.data
   } catch (e) {
     const normalized = normalizeError(e)
-    oidcErrorMessage.value = normalized.message
+    oidcErrorMessage.value = normalized
     console.error('Failed to fetch OIDC keys:', e)
   } finally {
     oidcLoading.value = false
@@ -80,7 +94,7 @@ onMounted(() => {
 
     <!-- Error Banner for Scopes -->
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-6 rounded-md bg-error-50 p-4"
     >
       <div class="flex">
@@ -99,7 +113,7 @@ onMounted(() => {
         </div>
         <div class="ml-3">
           <p class="text-sm text-error-700">
-            {{ errorMessage }}
+            {{ errorText }}
           </p>
         </div>
       </div>
@@ -193,7 +207,7 @@ onMounted(() => {
 
       <!-- Error Banner for OIDC Keys -->
       <div
-        v-if="oidcErrorMessage"
+        v-if="oidcErrorText"
         class="m-6 rounded-md bg-error-50 p-4"
       >
         <div class="flex">
@@ -212,7 +226,7 @@ onMounted(() => {
           </div>
           <div class="ml-3">
             <p class="text-sm text-error-700">
-              {{ oidcErrorMessage }}
+              {{ oidcErrorText }}
             </p>
           </div>
         </div>

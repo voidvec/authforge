@@ -3,7 +3,8 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppAlert from '../../components/ui/AppAlert.vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import AppInput from '../../components/ui/AppInput.vue'
@@ -15,7 +16,15 @@ const username = ref('')
 const email = ref('')
 const password = ref('')
 const confirmPassword = ref('')
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const loading = ref(false)
 const success = ref(false)
 
@@ -25,7 +34,7 @@ const success = ref(false)
 const strength = computed(() => passwordStrength(password.value))
 
 async function handleRegister() {
-  error.value = ''
+  error.value = null
   if (password.value !== confirmPassword.value) {
     error.value = t('common.passwordsDoNotMatch')
     return
@@ -44,7 +53,7 @@ async function handleRegister() {
     success.value = true
     setTimeout(() => router.push('/login'), 2000)
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   } finally {
     loading.value = false
   }
@@ -85,11 +94,11 @@ async function handleRegister() {
     </div>
 
     <AppAlert
-      v-if="error"
+      v-if="errorText"
       type="error"
       class="mb-4"
     >
-      {{ error }}
+      {{ errorText }}
     </AppAlert>
 
     <form

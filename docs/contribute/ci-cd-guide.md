@@ -16,7 +16,10 @@ Push/PR to master (and workflow_dispatch)
         │     │     arch-guard / migration-check / api-diff /
         │     │     test naming / manage-script parity / OpenAPI checks /
         │     │     OpenAPI governance gate (three-layer consistency + version sync)
-        │     └── frontend (_frontend.yml) — frontend property tests
+        │     └── frontend (_frontend.yml) — vitest unit/property tests, ESLint,
+        │           production builds + bundle-size budget gate (#159),
+        │           Playwright e2e, and the frontend Docker image build smoke
+        │           (#160, path-filtered to frontends/** + deploy/docker/**)
         │
         ├── openapi-governance (openapi-governance.yml, PR-triggered) —
         │     oasdiff breaking-change gate (base vs PR openapi.yaml;
@@ -59,11 +62,22 @@ concurrency:
 
 ---
 
-## 3. Core Job in Depth: `build-test`
+## 3. Frontend Gate (`_frontend.yml`)
+
+The frontend gate runs for every CI run (it is part of the FAST gate, so it fails cheap and early). One Node job plus one Docker job:
+
+| Job | What it does |
+|---|---|
+| `frontend` | UI-kit byte-sync gate → vitest unit/property tests (both apps) → ESLint → production builds (`tsc && vite build`) → **bundle-size budget gate** (`scripts/check-frontend-size.mjs`, #159) → Playwright e2e (both apps, API-mocked) |
+| `frontend-image-smoke` (#160) | Path-filtered (`frontends/**`, `deploy/docker/**`, this workflow) `docker build` of **both frontend images with `push: false`** — the admin image (`frontends/admin/Dockerfile`) and the user frontend stage of `deploy/docker/Dockerfile` (`target: frontend-runtime`) — mirroring exactly what `release.yml` builds, so a context/lockfile/base-image regression fails the PR instead of the release. GHA layer cache keeps warm runs near the npm-ci cost. |
+
+Budget baselines live in `scripts/check-frontend-size.mjs` (raw JS bytes: total + entry chunk per app, +10% headroom). Raise a baseline only with written justification in the PR — the entry-chunk cap doubles as the i18n AOT guard: the vue-i18n message compiler re-entering the bundle costs ~90 KB on the main chunk and trips the gate mechanically.
+
+## 4. Core Job in Depth: `build-test`
 
 `build-test` is a reusable workflow (`_build-test.yml`) invoked by `ci.yml` as a `{linux, windows, macos}` matrix. All three platforms run the same Conan + `cmake --preset` build and CTest suite; the database is enabled via matrix inputs only where needed.
 
-### 3.1 Service Containers (linux matrix leg only)
+### 4.1 Service Containers (linux matrix leg only)
 
 In the Linux matrix leg, CI starts Postgres and Redis in Docker containers and confirms readiness with real queries (not just `pg_isready`):
 
@@ -77,7 +91,7 @@ In the Linux matrix leg, CI starts Postgres and Redis in Docker containers and c
 
 > **WARNING**: Redis runs without a password in CI, so the test configuration overrides it with the environment variable `FULLA_REDIS_PASSWORD=""`. The Windows/macOS matrix legs use `use_database=false` and fall back to the in-memory storage configuration (`config.ci.json`).
 
-### 3.2 Build Cache Strategy
+### 4.2 Build Cache Strategy
 
 To speed up CI builds, Conan dependencies are cached:
 
@@ -87,7 +101,7 @@ To speed up CI builds, Conan dependencies are cached:
 
 A cold build takes roughly **15-20 minutes**; with a cache hit this drops to **3-5 minutes**.
 
-### 3.3 Database Initialization
+### 4.3 Database Initialization
 
 Before testing, migration scripts initialize the database:
 
@@ -105,7 +119,7 @@ done
 
 > **Note**: the legacy `sql/001_*.sql` through `sql/004_*.sql` files are deprecated and removed; all schema definitions are now managed centrally under `apps/server/migrations/`.
 
-### 3.4 Test Execution
+### 4.4 Test Execution
 
 ```bash
 ctest -V -C Release --output-on-failure --timeout 120
@@ -115,7 +129,7 @@ ctest -V -C Release --output-on-failure --timeout 120
 - `--output-on-failure` : print test stdout on failure
 - `--timeout 120` : each test gets at most 2 minutes
 
-### 3.5 Failure Log Upload
+### 4.5 Failure Log Upload
 
 When tests fail, CI automatically packages and uploads the following as artifacts (retained for 7 days):
 
@@ -124,13 +138,13 @@ When tests fail, CI automatically packages and uploads the following as artifact
 
 ---
 
-## 4. Image Build and Signing
+## 5. Image Build and Signing
 
 The CI pipeline itself does not build Docker images. Multi-arch container image builds, GHCR pushes, cosign signing, and syft SBOMs are handled by `release.yml` when a SemVer tag (`vX.Y.Z`) is pushed. See [Releases & Supply Chain Security](https://github.com/voidvec/fulla#releases--supply-chain-security).
 
 ---
 
-## 5. Reproducing the CI Environment Locally
+## 6. Reproducing the CI Environment Locally
 
 To simulate CI behavior locally:
 
@@ -157,7 +171,7 @@ ctest -V -C Release --output-on-failure
 
 ---
 
-## 6. Multi-Platform Matrix
+## 7. Multi-Platform Matrix
 
 Multi-platform CI has been consolidated into the `build-test` job in `ci.yml`; an `include` matrix runs all three platforms on the same reusable workflow (`_build-test.yml`).
 

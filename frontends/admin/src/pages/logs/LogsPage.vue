@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
-import { normalizeError } from '@/services/errorAdapter'
+import { normalizeError, type NormalizedError } from '@/services/errorAdapter'
+import { getErrorMessage } from '@/services/messages'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import DData from '@/components/ui/DData.vue'
 
 const logs = ref<any[]>([])
 const loading = ref(true)
 const page = ref(1)
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 // Filters (A-LOG-004). action/outcome/actor_id are passed as query params; the
 // backend applies them server-side (gap-fix: actor_id filter existed on the
@@ -19,7 +27,7 @@ const actorIdFilter = ref('')
 
 async function fetchLogs() {
   loading.value = true
-  errorMessage.value = ''
+  errorMessage.value = null
   try {
     const params: Record<string, string | number> = { page: page.value, per_page: 50 }
     if (actionFilter.value) params.action = actionFilter.value
@@ -29,7 +37,7 @@ async function fetchLogs() {
     logs.value = resp.data.logs || []
   } catch (e) {
     const normalized = normalizeError(e)
-    errorMessage.value = normalized.message
+    errorMessage.value = normalized
   } finally {
     loading.value = false
   }
@@ -117,7 +125,7 @@ onMounted(fetchLogs)
 
     <!-- Error Banner -->
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-6 rounded-md bg-error-50 p-4"
     >
       <div class="flex">
@@ -136,7 +144,7 @@ onMounted(fetchLogs)
         </div>
         <div class="ml-3">
           <p class="text-sm text-error-700">
-            {{ errorMessage }}
+            {{ errorText }}
           </p>
         </div>
       </div>

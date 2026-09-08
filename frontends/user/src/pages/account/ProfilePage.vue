@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../../stores/auth'
 import http from '../../services/http'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppAlert from '../../components/ui/AppAlert.vue'
 import AppBadge from '../../components/ui/AppBadge.vue'
 import AppCard from '../../components/ui/AppCard.vue'
@@ -14,7 +15,15 @@ const auth = useAuthStore()
 const profile = ref<any>(null)
 const loading = ref(true)
 const success = ref('')
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 async function fetchProfile() {
   loading.value = true
@@ -34,7 +43,7 @@ async function resendVerification() {
     success.value = t('account.profile.verificationSent')
     setTimeout(() => { success.value = '' }, 3000)
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   }
 }
 
@@ -55,11 +64,11 @@ onMounted(fetchProfile)
       {{ success }}
     </AppAlert>
     <AppAlert
-      v-if="error"
+      v-if="errorText"
       type="error"
       class="mb-4"
     >
-      {{ error }}
+      {{ errorText }}
     </AppAlert>
 
     <div

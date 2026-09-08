@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import http from '../../services/http'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppAlert from '../../components/ui/AppAlert.vue'
 import AppCard from '../../components/ui/AppCard.vue'
 import AppEmptyState from '../../components/ui/AppEmptyState.vue'
@@ -11,7 +12,15 @@ import DData from '../../components/ui/DData.vue'
 const { t } = useI18n()
 const apps = ref<any[]>([])
 const loading = ref(true)
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const success = ref('')
 
 async function fetchApps() {
@@ -38,7 +47,7 @@ async function revokeApp(clientId: string, appName: string) {
     setTimeout(() => { success.value = '' }, 3000)
     await fetchApps()
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   }
 }
 
@@ -62,11 +71,11 @@ onMounted(fetchApps)
       {{ success }}
     </AppAlert>
     <AppAlert
-      v-if="error"
+      v-if="errorText"
       type="error"
       class="mb-4"
     >
-      {{ error }}
+      {{ errorText }}
     </AppAlert>
 
     <div

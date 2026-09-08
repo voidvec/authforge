@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../../stores/auth'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
 import { getErrorMessage } from '../../services/messages'
 
 const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 // Secondary detail: the raw error_description from the redirect, kept only
 // when it exists and adds something the catalog-resolved message lacks.
 const errorDetail = ref('')
@@ -20,13 +28,19 @@ onMounted(async () => {
   const errorParam = route.query.error as string
 
   if (typeof errorParam === 'string' && errorParam) {
-    // Resolve the protocol error code through the shared message catalog
-    // (covers every OAuth2/OIDC code; unknown codes fall back to the generic
-    // message) instead of rendering error_description raw.
-    error.value = getErrorMessage(errorParam)
+    // Keep the raw protocol error code — the catalog message resolves at
+    // render time so a locale switch re-translates it (#158). Covers every
+    // OAuth2/OIDC code; unknown codes fall back to the generic message,
+    // instead of rendering error_description raw.
+    error.value = {
+      code: errorParam,
+      message: getErrorMessage(errorParam),
+      request_id: '',
+      httpStatus: 400,
+    }
     const description = route.query.error_description
     errorDetail.value =
-      typeof description === 'string' && description && description !== error.value
+      typeof description === 'string' && description && description !== errorText.value
         ? description
         : ''
     return
@@ -41,7 +55,7 @@ onMounted(async () => {
     await auth.exchangeCode(code)
     router.replace('/')
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   }
 })
 </script>
@@ -50,14 +64,14 @@ onMounted(async () => {
   <div class="min-h-screen flex items-center justify-center">
     <div class="text-center">
       <div
-        v-if="error"
+        v-if="errorText"
         class="p-6 bg-error-50 border border-error-200 rounded-lg max-w-md"
       >
         <p class="text-error-700 font-medium">
           {{ $t('oauth.callback.errorTitle') }}
         </p>
         <p class="text-error-600 text-sm mt-2">
-          {{ error }}
+          {{ errorText }}
         </p>
         <p
           v-if="errorDetail"

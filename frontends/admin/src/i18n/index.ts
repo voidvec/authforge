@@ -1,9 +1,10 @@
 import { createI18n } from 'vue-i18n'
-import { en } from './en'
-import { zhCN } from './zh-CN'
+import en from './en'
+import zhCN from './zh-CN'
 import {
   FALLBACK_LOCALE,
   setCurrentLocale,
+  setLocaleGetter,
   SUPPORTED_LOCALES,
   type AppLocale,
 } from '../services/locale'
@@ -48,6 +49,12 @@ export const i18n = createI18n({
     'zh-CN': zhCN,
   },
 })
+
+// #158: route the services layer through the composer locale ref so
+// getErrorMessage() called inside a render effect (a computed resolving an
+// error code) re-resolves when the locale switches. The setCurrentLocale
+// mirror below stays for getter-less importers (node-env unit tests).
+setLocaleGetter(() => i18n.global.locale.value as AppLocale)
 
 function applyLocale(locale: AppLocale, persist: boolean): void {
   i18n.global.locale.value = locale

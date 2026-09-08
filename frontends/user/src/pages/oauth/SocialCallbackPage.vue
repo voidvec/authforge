@@ -9,20 +9,29 @@
 //      and possibly auto-CREATE an account, review W1).
 //   2. login flow: POST /api/{provider}/login { code } -> first-party token
 //      pair (#70) -> setTokens + fetchUser + redirect home.
-import { onMounted, ref } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../../stores/auth'
 import { setTokens, getAccessToken, tryRestoreSession } from '../../services/http'
 import { userService } from '../../services/userService'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import axios from 'axios'
 
 const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 const provider = (route.meta.provider as string) || 'google'
 const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1)
@@ -53,7 +62,7 @@ onMounted(async () => {
       router.replace('/security')
       return
     } catch (e: unknown) {
-      error.value = normalizeError(e).message
+      error.value = normalizeError(e)
       return
     }
   }
@@ -72,7 +81,7 @@ onMounted(async () => {
       error.value = t('oauth.noAccessToken', { provider: providerLabel })
     }
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   }
 })
 </script>
@@ -81,10 +90,10 @@ onMounted(async () => {
   <div class="min-h-screen flex items-center justify-center">
     <div class="text-center max-w-md">
       <div
-        v-if="error"
+        v-if="errorText"
         class="rounded-lg bg-error-50 border border-error-200 p-4 text-sm text-error-700"
       >
-        {{ error }}
+        {{ errorText }}
       </div>
       <div v-else class="text-neutral-500">
         {{ $t('oauth.social.completing', { provider: providerLabel }) }}

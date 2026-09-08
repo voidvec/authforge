@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import http from '../../services/http'
 import { userService } from '../../services/userService'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import { base64UrlEncode, base64UrlDecode } from '../../utils/pkce'
 import type { SocialLink } from '../../types'
 import AppAlert from '../../components/ui/AppAlert.vue'
@@ -16,7 +17,15 @@ const { t } = useI18n()
 const loading = ref(true)
 const profile = ref<any>(null)
 const success = ref('')
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 // Password change
 const oldPassword = ref('')
@@ -84,7 +93,7 @@ async function unlinkSocial(provider: string) {
     showSuccess(t('account.security.social.unlinked', { provider: label }))
     await fetchSocialLinks()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     unlinkingProvider.value = ''
   }
@@ -99,8 +108,8 @@ async function fetchProfile() {
   fetchSocialLinks()
 }
 
-function showSuccess(msg: string) { success.value = msg; error.value = ''; setTimeout(() => { success.value = '' }, 4000) }
-function showError(msg: string) { error.value = msg; success.value = '' }
+function showSuccess(msg: string) { success.value = msg; error.value = null; setTimeout(() => { success.value = '' }, 4000) }
+function showError(msg: NormalizedError | string) { error.value = msg; success.value = '' }
 
 async function changePassword() {
   if (newPassword.value !== confirmNewPassword.value) { showError(t('common.passwordsDoNotMatch')); return }
@@ -111,7 +120,7 @@ async function changePassword() {
     showSuccess(t('account.security.passwordChanged'))
     oldPassword.value = ''; newPassword.value = ''; confirmNewPassword.value = ''
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally { changingPassword.value = false }
 }
 
@@ -121,7 +130,7 @@ async function setupMfa() {
     const resp = await http.post('/api/me/mfa/setup')
     mfaSetupData.value = resp.data
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
     settingUpMfa.value = false
   }
 }
@@ -145,7 +154,7 @@ async function verifyMfaSetup() {
     }
     await fetchProfile()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -183,7 +192,7 @@ async function disableMfa() {
     disablePassword.value = ''
     await fetchProfile()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally { disablingMfa.value = false }
 }
 
@@ -264,7 +273,7 @@ async function registerPasskey() {
     if (e.name === 'NotAllowedError') {
       showError(t('account.security.passkeys.timedOut'))
     } else {
-      showError(normalizeError(e).message)
+      showError(normalizeError(e))
     }
   } finally { registeringPasskey.value = false }
 }
@@ -283,7 +292,7 @@ async function deleteAccount() {
     localStorage.clear()
     window.location.href = '/login'
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally { deletingAccount.value = false }
 }
 
@@ -304,11 +313,11 @@ onMounted(fetchProfile)
       {{ success }}
     </AppAlert>
     <AppAlert
-      v-if="error"
+      v-if="errorText"
       type="error"
       class="mb-4"
     >
-      {{ error }}
+      {{ errorText }}
     </AppAlert>
 
     <div

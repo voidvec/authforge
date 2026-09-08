@@ -103,12 +103,12 @@ async function handlePasswordChange() {
     </div>
 
     <AppAlert
-      v-if="auth.error"
+      v-if="auth.errorText"
       type="error"
       class="mb-6"
       dismissible
     >
-      {{ auth.error }}
+      {{ auth.errorText }}
     </AppAlert>
 
     <!-- #145: Forced Password Change -->

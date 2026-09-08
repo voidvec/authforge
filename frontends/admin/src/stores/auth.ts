@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import axios from 'axios'
 import { normalizeError, sessionExpiredError } from '../services/errorAdapter'
 import type { NormalizedError } from '../services/errorAdapter'
+import { getErrorMessage } from '../services/messages'
 import { generatePkcePair } from '../utils/pkce'
 
 // Refresh token is persisted in sessionStorage so a page refresh can restore the
@@ -59,12 +60,14 @@ async function redirectToLogin(): Promise<void> {
 }
 
 // Result shape shared by login()/verifyMfa() — the LoginPage branches on it.
+// #158: `error` carries the NormalizedError (not the resolved string) so the
+// banner re-translates on locale switch; plain strings keep snapshot semantics.
 export interface AdminLoginResult {
   success?: boolean
   mfaRequired?: boolean
   mfaToken?: string
   passwordChangeRequired?: boolean
-  error?: string
+  error?: NormalizedError | string
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -75,7 +78,15 @@ export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(null)
   const refreshToken = ref<string | null>(null)
   const user = ref<any>(null)
-  const loginError = ref('')
+  // #158: catalog-backed errors are stored as NormalizedError and resolved at
+  // render time (loginErrorText) so switching locale re-translates the banner;
+  // plain strings (chrome copy via t()) keep snapshot semantics.
+  const loginError = ref<NormalizedError | string | null>(null)
+  const loginErrorText = computed(() => {
+    const e = loginError.value
+    if (!e) return ''
+    return typeof e === 'string' ? e : getErrorMessage(e.code)
+  })
 
   const isAuthenticated = computed(() => !!accessToken.value)
 
@@ -105,7 +116,7 @@ export const useAuthStore = defineStore('auth', () => {
    * This avoids the redirect-based flow for the admin SPA.
    */
   async function login(username: string, password: string): Promise<AdminLoginResult> {
-    loginError.value = ''
+    loginError.value = null
     try {
       // PKCE (RFC 7636): generate a verifier/challenge pair so the backend's
       // `require_pkce_for_public` enforcement (F-011) does not reject the
@@ -167,7 +178,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (e: unknown) {
       // Surface a consistent localized message via the Frontend_Error_Module
       // instead of reading raw e.response.data.* (Requirements 10.2, 10.3).
-      loginError.value = normalizeError(e).message
+      loginError.value = normalizeError(e)
       return { error: loginError.value }
     }
   }
@@ -207,7 +218,7 @@ export const useAuthStore = defineStore('auth', () => {
       sessionStorage.removeItem('pkce_code_verifier')
       return await applySession(resp)
     } catch (e: unknown) {
-      loginError.value = normalizeError(e).message
+      loginError.value = normalizeError(e)
       return { error: loginError.value }
     }
   }
@@ -218,14 +229,14 @@ export const useAuthStore = defineStore('auth', () => {
    * no Bearer token exists at this point by design.
    */
   async function changePasswordForced(oldPassword: string, newPassword: string): Promise<void> {
-    loginError.value = ''
+    loginError.value = null
     try {
       await axios.post('/oauth2/password/change', JSON.stringify({
         old_password: oldPassword,
         new_password: newPassword,
       }), { headers: { 'Content-Type': 'application/json' } })
     } catch (e: unknown) {
-      loginError.value = normalizeError(e).message
+      loginError.value = normalizeError(e)
       throw e
     }
   }
@@ -397,6 +408,7 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken,
     user,
     loginError,
+    loginErrorText,
     isAuthenticated,
     login,
     verifyMfa,

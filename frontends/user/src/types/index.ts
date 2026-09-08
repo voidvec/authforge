@@ -6,6 +6,17 @@ export interface User {
   roles?: string[]
 }
 
+// #158: `error` carries the NormalizedError (not the resolved string) so the
+// login banner re-translates on locale switch; plain strings keep snapshot
+// semantics (chrome copy via t()).
+export interface LoginResult {
+  success?: boolean
+  mfaRequired?: boolean
+  mfaToken?: string
+  passwordChangeRequired?: boolean
+  error?: import('../services/errorAdapter').NormalizedError | string
+}
+
 export interface TokenResponse {
   access_token: string
   // Optional per the OAuth2/OIDC specs (and openapi.yaml): M2M flows may not
@@ -14,14 +25,6 @@ export interface TokenResponse {
   token_type: string
   expires_in: number
   id_token?: string
-}
-
-export interface LoginResult {
-  success?: boolean
-  mfaRequired?: boolean
-  mfaToken?: string
-  passwordChangeRequired?: boolean
-  error?: string
 }
 
 export interface AuthorizedApp {

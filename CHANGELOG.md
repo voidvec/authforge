@@ -15,11 +15,14 @@ Changelog entries are written in English (see CONTRIBUTING).
 
 - **⚠️ Breaking (admin API) — `GET /api/admin/oidc/keys` reports the live signing keystore (#110)**: the flat `kid`/`kty`/`alg`/`use`/`key_status` fields are replaced by a `keys[]` array (per-key `kid`/`kty`/`alg`/`use` plus `status`: `active` = signs new tokens, `published` = verification-only during a rotation grace window), `active_kid`, and `key_count`. External admin integrations should read the signing key material from `/.well-known/jwks.json` as before; this endpoint now summarizes rotation state.
 - `POST /oauth2/end_session` (like GET) accepts `client_id` as the RP identification when `id_token_hint` is absent (#88): the `post_logout_redirect_uri` must still be registered for that client.
+- Error messages now re-translate on locale switch in both frontends (#158): error state stores the normalized error code instead of the resolved string, and banners re-resolve the catalog message at render time through the injected reactive locale getter; text already on screen follows a subsequent language switch (previously it kept the locale it was triggered in).
 
 ### Added
 
 - Signing-key rotation keystore (#110): `plugins.OAuth2Plugin.config.oidc.signing_keystore_dir` (`<kid>.pem` files + `active_kid` marker); JWKS publishes every loaded key, verification routes on the JWT `kid`, rotation is a documented three-restart procedure (see `docs/operate/configuration-guide.md` §9).
 - Coverage ratchet gate (#105): CI fails when any library's line coverage drops more than 0.5pp below `tools/coverage/ratchet-baseline.json`; re-baselining is a deliberate reviewed PR edit.
+- AOT i18n precompilation + bundle-size budget gate (#159): `@intlify/unplugin-vue-i18n` precompiles the UI catalogs and production builds bundle vue-i18n runtime-only (main chunk −118 KB user / −105 KB admin); `scripts/check-frontend-size.mjs` fails when total or entry-chunk JS exceeds the recorded baseline +10% (wired into `_frontend.yml`; the entry-chunk cap doubles as the compiler-back guard).
+- Frontend Docker image build smoke (#160): PR CI builds both frontend images (admin image and the `frontend-runtime` stage) with `push: false`, path-filtered to `frontends/**` + `deploy/docker/**`, so image-build regressions fail the PR instead of surfacing at release time.
 
 ## [1.1.0] - 2026-09-01
 

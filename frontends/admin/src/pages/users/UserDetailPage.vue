@@ -3,7 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppAlert from '../../components/ui/AppAlert.vue'
 import AppBadge from '../../components/ui/AppBadge.vue'
 import DData from '../../components/ui/DData.vue'
@@ -23,7 +24,15 @@ const loading = ref(true)
 const saving = ref(false)
 const activeTab = ref<'info' | 'security' | 'roles'>('info')
 const successMessage = ref('')
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (parameterized chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 const user = ref<any>({})
 const allRoles = ref<any[]>([])
@@ -37,13 +46,13 @@ const selectedRoles = ref<string[]>([])
 
 function showSuccess(msg: string) {
   successMessage.value = msg
-  errorMessage.value = ''
+  errorMessage.value = null
   setTimeout(() => { successMessage.value = '' }, 3000)
 }
-function showError(msg: string) {
+function showError(msg: NormalizedError | string) {
   errorMessage.value = msg
   successMessage.value = ''
-  setTimeout(() => { errorMessage.value = '' }, 5000)
+  setTimeout(() => { errorMessage.value = null }, 5000)
 }
 
 async function fetchUser() {
@@ -59,7 +68,7 @@ async function fetchUser() {
     editOrgId.value = resp.data.org_id ?? ''
     selectedRoles.value = (resp.data.roles || []).filter((r: any) => typeof r === 'string')
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     loading.value = false
   }
@@ -89,7 +98,7 @@ async function saveInfo() {
     showSuccess(t('admin.users.userUpdated'))
     await fetchUser()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -103,7 +112,7 @@ async function saveRoles() {
     // Refresh user data in background without clearing success message
     fetchUser().catch(() => {})
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -116,7 +125,7 @@ async function disableUser() {
     showSuccess(t('admin.users.userDisabled'))
     await fetchUser()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -126,7 +135,7 @@ async function enableUser() {
     showSuccess(t('admin.users.userEnabled'))
     await fetchUser()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -160,11 +169,11 @@ onMounted(() => {
       {{ successMessage }}
     </AppAlert>
     <AppAlert
-      v-if="errorMessage"
+      v-if="errorText"
       type="error"
       class="mb-4"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </AppAlert>
 
     <div

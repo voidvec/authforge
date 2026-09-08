@@ -4,8 +4,11 @@
  * 键集必须与 `./en.ts` 完全一致（key-parity 单测约束）；`ui.*` 在
  * frontends/admin 中必须解析出相同语义（components/ui 字节同步消费者）。
  * 译文风格对齐 `services/messages/zh-CN.ts`：简洁、正式、您称、不用叹号。
+ *
+ * #159：default export（unplugin-vue-i18n 只预编译 default-export 消息对象的
+ * 资源文件）——保持纯静态字面量。
  */
-export const zhCN = {
+export default {
   ui: {
     locale: {
       label: '语言',
