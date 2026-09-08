@@ -86,7 +86,7 @@ async function handlePasswordChange() {
   try {
     await auth.changePasswordForced(oldPassword.value, newPassword.value)
     passwordChangeDone.value = true
-    auth.loginError = ''
+    auth.loginError = null
   } catch {
     // loginError is set by the store; shown in the banner above.
   } finally {
@@ -100,7 +100,7 @@ function backToLogin() {
   mfaToken.value = ''
   showPasswordChange.value = false
   passwordChangeDone.value = false
-  auth.loginError = ''
+  auth.loginError = null
 }
 </script>
 
@@ -124,13 +124,13 @@ function backToLogin() {
         {{ $t('login.subtitle') }}
       </p>
       <AppAlert
-        v-if="auth.loginError"
+        v-if="auth.loginErrorText"
         type="error"
         class="mb-6"
         dismissible
-        @dismiss="auth.loginError = ''"
+        @dismiss="auth.loginError = null"
       >
-        {{ auth.loginError }}
+        {{ auth.loginErrorText }}
       </AppAlert>
 
       <!-- #145: forced first-login password change -->

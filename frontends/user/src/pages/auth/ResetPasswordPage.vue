@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppAlert from '../../components/ui/AppAlert.vue'
 import AppButton from '../../components/ui/AppButton.vue'
 import AppInput from '../../components/ui/AppInput.vue'
@@ -15,20 +16,28 @@ const token = route.query.token as string || ''
 const newPassword = ref('')
 const confirmPassword = ref('')
 const loading = ref(false)
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const success = ref(false)
 
 async function handleReset() {
   if (newPassword.value !== confirmPassword.value) { error.value = t('common.passwordsDoNotMatch'); return }
   if (newPassword.value.length < 8) { error.value = t('common.passwordMinLength'); return }
-  error.value = ''
+  error.value = null
   loading.value = true
   try {
     await axios.post('/api/password-reset/confirm', { token, new_password: newPassword.value }, { headers: { 'Content-Type': 'application/json' } })
     success.value = true
     setTimeout(() => router.push('/login'), 3000)
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   } finally {
     loading.value = false
   }
@@ -82,10 +91,10 @@ async function handleReset() {
       @submit.prevent="handleReset"
     >
       <AppAlert
-        v-if="error"
+        v-if="errorText"
         type="error"
       >
-        {{ error }}
+        {{ errorText }}
       </AppAlert>
       <AppInput
         v-model="newPassword"

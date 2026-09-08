@@ -1,18 +1,27 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../../stores/auth'
 import { setTokens, getAccessToken, tryRestoreSession } from '../../services/http'
 import { userService } from '../../services/userService'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import axios from 'axios'
 
 const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const error = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (chrome copy via t()) keep snapshot semantics.
+const error = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = error.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 onMounted(async () => {
   const code = route.query.code as string
@@ -50,7 +59,7 @@ onMounted(async () => {
       router.replace('/security')
       return
     } catch (e: unknown) {
-      error.value = normalizeError(e).message
+      error.value = normalizeError(e)
       return
     }
   }
@@ -70,7 +79,7 @@ onMounted(async () => {
       error.value = t('oauth.noAccessToken', { provider: 'GitHub' })
     }
   } catch (e: unknown) {
-    error.value = normalizeError(e).message
+    error.value = normalizeError(e)
   }
 })
 </script>
@@ -80,14 +89,14 @@ onMounted(async () => {
     <div class="fixed inset-x-0 top-0 h-[3px] bg-brand-600 z-10" />
     <div class="text-center max-w-md w-full">
       <div
-        v-if="error"
+        v-if="errorText"
         class="p-6 bg-surface border border-error-200 rounded-card shadow-sm text-left"
       >
         <p class="text-error-700 font-medium">
           {{ $t('oauth.github.errorTitle') }}
         </p>
         <p class="text-error-600 text-sm mt-2">
-          {{ error }}
+          {{ errorText }}
         </p>
         <router-link
           to="/login"

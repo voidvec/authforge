@@ -8,8 +8,8 @@
 // Sources are enumerated via import.meta.glob('?raw') so the test stays
 // tsc-clean without @types/node and works identically under vitest.
 import { describe, expect, it } from 'vitest'
-import { en } from './en'
-import { zhCN } from './zh-CN'
+import en from './en'
+import zhCN from './zh-CN'
 
 type Tree = Record<string, unknown>
 

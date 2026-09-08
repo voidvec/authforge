@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@intlify/unplugin-vue-i18n": "^11.2.5",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@typescript/native": "npm:typescript@^7.0.2",

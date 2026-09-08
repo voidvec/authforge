@@ -2,7 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppEmptyState from '../../components/ui/AppEmptyState.vue'
 
 const { t } = useI18n()
@@ -12,7 +13,15 @@ const loading = ref(true)
 const showCreateModal = ref(false)
 const showSecretModal = ref(false)
 const newClientSecret = ref('')
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (parameterized chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const createForm = ref({
   name: '',
   client_type: 'CONFIDENTIAL',
@@ -31,9 +40,9 @@ const AVAILABLE_GRANT_TYPES = computed(() => [
 ])
 
 // Inline error banner (replaces native alert for backend errors, Req 10.6).
-function showError(msg: string) {
+function showError(msg: NormalizedError | string) {
   errorMessage.value = msg
-  setTimeout(() => { errorMessage.value = '' }, 5000)
+  setTimeout(() => { errorMessage.value = null }, 5000)
 }
 
 async function fetchClients() {
@@ -42,7 +51,7 @@ async function fetchClients() {
     const resp = await axios.get('/api/admin/clients')
     clients.value = resp.data.clients || []
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     loading.value = false
   }
@@ -72,7 +81,7 @@ async function createClient() {
     await fetchClients()
   } catch (e: unknown) {
     // Req 10.3/10.6: normalize via Frontend_Error_Module, no native alert.
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     creating.value = false
   }
@@ -84,7 +93,7 @@ async function deleteClient(clientId: string) {
     await axios.delete(`/api/admin/clients/${clientId}`)
     await fetchClients()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -95,7 +104,7 @@ async function resetSecret(clientId: string) {
     newClientSecret.value = resp.data.client_secret || ''
     showSecretModal.value = true
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -117,10 +126,10 @@ onMounted(fetchClients)
     </div>
 
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-4 p-3 bg-error-50 border border-error-200 text-error-700 rounded-md text-sm"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </div>
 
     <div

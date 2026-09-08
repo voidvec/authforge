@@ -2,7 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '@/services/errorAdapter'
+import { normalizeError, type NormalizedError } from '@/services/errorAdapter'
+import { getErrorMessage } from '@/services/messages'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import DData from '@/components/ui/DData.vue'
 
@@ -22,7 +23,14 @@ const loading = ref(true)
 const page = ref(1)
 const perPage = ref(50)
 const total = ref(0)
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const successMessage = ref('')
 
 // Filters
@@ -54,7 +62,7 @@ async function fetchTokens() {
     total.value = resp.data.total || 0
   } catch (e) {
     const normalized = normalizeError(e)
-    errorMessage.value = normalized.message
+    errorMessage.value = normalized
     console.error('Failed to fetch tokens:', e)
   } finally {
     loading.value = false
@@ -97,14 +105,14 @@ async function revokeToken(tokenPrefix: string) {
     // Each action owns the banner lifecycle: clear stale banners up front,
     // then show the outcome — never inside fetchTokens, which the actions
     // call afterwards (clearing there would wipe the just-set message).
-    errorMessage.value = ''
+    errorMessage.value = null
     successMessage.value = ''
     try {
       await axios.delete(`/api/admin/tokens/${tokenPrefix}`)
       await fetchTokens()
     } catch (e) {
       const normalized = normalizeError(e)
-      errorMessage.value = normalized.message
+      errorMessage.value = normalized
     }
   })
 }
@@ -112,7 +120,7 @@ async function revokeToken(tokenPrefix: string) {
 async function revokeByClient(clientId: string) {
   showBulkMenu.value = false
   showConfirm(t('admin.tokens.revokeClientConfirm', { name: clientId }), async () => {
-    errorMessage.value = ''
+    errorMessage.value = null
     successMessage.value = ''
     try {
       const resp = await axios.post('/api/admin/tokens/revoke-by-client', { client_id: clientId })
@@ -122,7 +130,7 @@ async function revokeByClient(clientId: string) {
       await fetchTokens()
     } catch (e) {
       const normalized = normalizeError(e)
-      errorMessage.value = normalized.message
+      errorMessage.value = normalized
     }
   })
 }
@@ -130,7 +138,7 @@ async function revokeByClient(clientId: string) {
 async function revokeByUser() {
   if (!userIdFilter.value) return
   showConfirm(t('admin.tokens.revokeUserConfirm', { name: userIdFilter.value }), async () => {
-    errorMessage.value = ''
+    errorMessage.value = null
     successMessage.value = ''
     try {
       const resp = await axios.post('/api/admin/tokens/revoke-by-user', { user_id: userIdFilter.value })
@@ -138,7 +146,7 @@ async function revokeByUser() {
       await fetchTokens()
     } catch (e) {
       const normalized = normalizeError(e)
-      errorMessage.value = normalized.message
+      errorMessage.value = normalized
     }
   })
 }
@@ -211,7 +219,7 @@ onMounted(fetchTokens)
 
     <!-- Error Banner -->
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-6 rounded-md bg-error-50 p-4"
     >
       <div class="flex">
@@ -230,7 +238,7 @@ onMounted(fetchTokens)
         </div>
         <div class="ml-3">
           <p class="text-sm text-error-700">
-            {{ errorMessage }}
+            {{ errorText }}
           </p>
         </div>
       </div>

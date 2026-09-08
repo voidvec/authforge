@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 
 const { t } = useI18n()
 const route = useRoute()
 const status = ref<'loading' | 'success' | 'error'>('loading')
-const message = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (messageText) so switching locale re-translates text on screen.
+const message = ref<NormalizedError | string | null>(null)
+const messageText = computed(() => {
+  const e = message.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 onMounted(async () => {
   const token = route.query.token as string
@@ -23,7 +31,7 @@ onMounted(async () => {
     message.value = resp.data?.message || t('auth.verify.successDefault')
   } catch (e: unknown) {
     status.value = 'error'
-    message.value = normalizeError(e).message
+    message.value = normalizeError(e)
   }
 })
 </script>
@@ -51,7 +59,7 @@ onMounted(async () => {
         {{ $t('auth.verify.successTitle') }}
       </h2>
       <p class="mt-2 text-neutral-600">
-        {{ message }}
+        {{ messageText }}
       </p>
       <router-link
         to="/login"
@@ -76,7 +84,7 @@ onMounted(async () => {
         {{ $t('auth.verify.errorTitle') }}
       </h2>
       <p class="mt-2 text-neutral-600">
-        {{ message }}
+        {{ messageText }}
       </p>
       <router-link
         to="/login"

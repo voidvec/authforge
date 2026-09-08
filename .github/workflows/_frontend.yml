@@ -63,6 +63,12 @@ jobs:
         working-directory: ${{ github.workspace }}/frontends/admin
         run: npm run build
 
+      # #159: budgets live in the script; the entry-chunk cap doubles as the
+      # AOT guard (the vue-i18n message compiler returning to the bundle costs
+      # ~90 KB on the main chunk, far beyond the 10% headroom).
+      - name: Bundle-size budget gate (#159)
+        run: node scripts/check-frontend-size.mjs
+
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
         working-directory: ${{ github.workspace }}/frontends/user
@@ -98,3 +104,57 @@ jobs:
             frontends/admin/playwright-report/
             frontends/admin/test-results/
           if-no-files-found: ignore
+
+  # #160: PR-level smoke for the frontend Docker images. Node CI above never
+  # builds the images, so a context/lockfile/base-image regression surfaced
+  # only at release time — the worst possible timing. Mirrors the two frontend
+  # builds of release.yml (admin context build + user frontend-runtime stage);
+  # no push, no registry — build success is the gate. GHA layer cache keeps
+  # steady-state runs near the npm-ci-and-build cost; if that still proves
+  # too slow, drop to `continue-on-error: true` here rather than removing the
+  # job.
+  frontend-image-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Detect frontend image paths
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            images:
+              - 'frontends/**'
+              - 'deploy/docker/**'
+              - '.github/workflows/_frontend.yml'
+
+      - name: Set up Docker Buildx
+        if: steps.filter.outputs.images == 'true'
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+
+      # Same context/file as release.yml's "Build admin image" (push: false).
+      - name: Smoke build admin image
+        if: steps.filter.outputs.images == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: frontends/admin
+          file: frontends/admin/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Same context/file/target as release.yml's "Build frontend image".
+      - name: Smoke build user frontend image
+        if: steps.filter.outputs.images == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: frontend-runtime
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

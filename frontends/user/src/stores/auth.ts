@@ -3,13 +3,22 @@ import { ref, computed } from 'vue'
 import { authService } from '../services/authService'
 import { userService } from '../services/userService'
 import { getAccessToken, getRefreshToken, clearTokens as httpClearTokens, tryRestoreSession } from '../services/http'
-import { normalizeError } from '../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../services/errorAdapter'
+import { getErrorMessage } from '../services/messages'
 import type { User, LoginResult } from '../types'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const loading = ref(false)
-  const error = ref('')
+  // #158: catalog-backed errors are stored as NormalizedError and resolved at
+  // render time (errorText) so switching locale re-translates the banner;
+  // plain strings (chrome copy via t()) keep snapshot semantics.
+  const error = ref<NormalizedError | string | null>(null)
+  const errorText = computed(() => {
+    const e = error.value
+    if (!e) return ''
+    return typeof e === 'string' ? e : getErrorMessage(e.code)
+  })
   const tokenPresent = ref(!!getAccessToken() || !!getRefreshToken())
   const sessionRestored = ref(false)
 
@@ -35,7 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function login(username: string, password: string): Promise<LoginResult> {
-    error.value = ''
+    error.value = null
     loading.value = true
     try {
       const result = await authService.login(username, password)
@@ -45,7 +54,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
       return result
     } catch (e: unknown) {
-      error.value = normalizeError(e).message
+      error.value = normalizeError(e)
       return { error: error.value }
     } finally {
       loading.value = false
@@ -53,7 +62,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function verifyMfa(mfaToken: string, code: string): Promise<LoginResult> {
-    error.value = ''
+    error.value = null
     loading.value = true
     try {
       const result = await authService.verifyMfa(mfaToken, code)
@@ -63,7 +72,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
       return result
     } catch (e: unknown) {
-      error.value = normalizeError(e).message
+      error.value = normalizeError(e)
       return { error: error.value }
     } finally {
       loading.value = false
@@ -96,5 +105,5 @@ export const useAuthStore = defineStore('auth', () => {
     restoreSession()
   }
 
-  return { user, loading, error, isAuthenticated, login, verifyMfa, exchangeCode, fetchUser, logout, restoreSession, markAuthenticated }
+  return { user, loading, error, errorText, isAuthenticated, login, verifyMfa, exchangeCode, fetchUser, logout, restoreSession, markAuthenticated }
 })

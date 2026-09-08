@@ -2,7 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 import AppAlert from '../../components/ui/AppAlert.vue'
 import AppSkeleton from '../../components/ui/AppSkeleton.vue'
 
@@ -11,7 +12,14 @@ const { t } = useI18n()
 const health = ref<any>(null)
 const stats = ref<any>(null)
 const loading = ref(true)
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 // GET /health/ready value domains (HealthController): status ∈ {ok, degraded,
 // unhealthy}, database ∈ {connected, not_configured, disconnected,
@@ -41,7 +49,7 @@ onMounted(async () => {
     stats.value = statsResp.data
   } catch (e) {
     const normalized = normalizeError(e)
-    errorMessage.value = normalized.message
+    errorMessage.value = normalized
     health.value = { status: 'error' }
   } finally {
     loading.value = false
@@ -63,12 +71,12 @@ onMounted(async () => {
 
     <!-- Error -->
     <AppAlert
-      v-if="errorMessage"
+      v-if="errorText"
       type="error"
       dismissible
-      @dismiss="errorMessage = ''"
+      @dismiss="errorMessage = null"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </AppAlert>
 
     <!-- Stats Grid -->

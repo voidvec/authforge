@@ -2,7 +2,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 
 const { t } = useI18n()
 
@@ -13,7 +14,15 @@ const showCreateModal = ref(false)
 const selectedUser = ref<any>(null)
 const roleInput = ref('')
 const saving = ref(false)
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (parameterized chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 const successMessage = ref('')
 
 // Pagination + search/filter state
@@ -31,9 +40,9 @@ const createForm = ref({ username: '', password: '', email: '', roles: '', email
 const hasPrev = computed(() => currentPage.value > 1)
 const hasNext = computed(() => currentPage.value < totalPages.value)
 
-function showError(msg: string) {
+function showError(msg: NormalizedError | string) {
   errorMessage.value = msg
-  setTimeout(() => { errorMessage.value = '' }, 5000)
+  setTimeout(() => { errorMessage.value = null }, 5000)
 }
 function showSuccess(msg: string) {
   successMessage.value = msg
@@ -55,7 +64,7 @@ async function fetchUsers() {
     total.value = resp.data.total || 0
     totalPages.value = resp.data.total_pages || 0
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     loading.value = false
   }
@@ -90,7 +99,7 @@ async function assignRoles() {
     showSuccess(t('admin.users.rolesAssigned'))
     await fetchUsers()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -134,7 +143,7 @@ async function createUser() {
     }
     await fetchUsers()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -156,7 +165,7 @@ async function deleteUser(user: any) {
     }
     await fetchUsers()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -178,10 +187,10 @@ onMounted(fetchUsers)
     </div>
 
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-4 p-3 bg-error-50 border border-error-200 text-error-700 rounded-md text-sm"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </div>
     <div
       v-if="successMessage"

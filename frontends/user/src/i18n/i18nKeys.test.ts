@@ -9,8 +9,8 @@
 // Sources are enumerated via import.meta.glob('?raw') so the test stays
 // tsc-clean without @types/node and works identically under vitest.
 import { describe, expect, it } from 'vitest'
-import { en } from './en'
-import { zhCN } from './zh-CN'
+import en from './en'
+import zhCN from './zh-CN'
 
 type Tree = Record<string, unknown>
 
@@ -76,7 +76,8 @@ describe('i18n catalog integrity', () => {
   it('ui.* subtree matches the admin app (byte-synced components)', async () => {
     // Same dynamic-import pattern as crossAppConsistency.property.test.ts;
     // the catalog module is dependency-free so node-env vitest resolves it.
-    const adminEn = (await import('../../../admin/src/i18n/en')).en as Tree
+    // (#159: the catalog default-exports the messages object now.)
+    const adminEn = (await import('../../../admin/src/i18n/en')).default as Tree
     expect(adminEn.ui).toEqual(en.ui)
   })
 })

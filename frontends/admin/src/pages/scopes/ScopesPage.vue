@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import { normalizeError } from '../../services/errorAdapter'
+import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
+import { getErrorMessage } from '../../services/messages'
 
 const { t } = useI18n()
 
@@ -13,20 +14,28 @@ const showEditModal = ref(false)
 const selectedScope = ref<any>(null)
 const saving = ref(false)
 const successMessage = ref('')
-const errorMessage = ref('')
+// #158: catalog-backed errors are stored as NormalizedError and resolved at
+// render time (errorText) so switching locale re-translates text on screen;
+// plain strings (parameterized chrome copy via t()) keep snapshot semantics.
+const errorMessage = ref<NormalizedError | string | null>(null)
+const errorText = computed(() => {
+  const e = errorMessage.value
+  if (!e) return ''
+  return typeof e === 'string' ? e : getErrorMessage(e.code)
+})
 
 const newScope = ref({ name: '', description: '', mapped_role: '', is_default: false, requires_admin_role: false })
 const editScope = ref({ description: '', mapped_role: '', is_default: false, requires_admin_role: false })
 
 function showSuccess(msg: string) {
   successMessage.value = msg
-  errorMessage.value = ''
+  errorMessage.value = null
   setTimeout(() => { successMessage.value = '' }, 3000)
 }
-function showError(msg: string) {
+function showError(msg: NormalizedError | string) {
   errorMessage.value = msg
   successMessage.value = ''
-  setTimeout(() => { errorMessage.value = '' }, 5000)
+  setTimeout(() => { errorMessage.value = null }, 5000)
 }
 
 async function fetchScopes() {
@@ -35,7 +44,7 @@ async function fetchScopes() {
     const resp = await axios.get('/api/admin/scopes')
     scopes.value = resp.data.scopes || []
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     loading.value = false
   }
@@ -51,7 +60,7 @@ async function createScope() {
     newScope.value = { name: '', description: '', mapped_role: '', is_default: false, requires_admin_role: false }
     await fetchScopes()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -77,7 +86,7 @@ async function updateScope() {
     showEditModal.value = false
     await fetchScopes()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   } finally {
     saving.value = false
   }
@@ -90,7 +99,7 @@ async function deleteScope(scope: any) {
     showSuccess(t('admin.scopes.deleted', { name: scope.name }))
     await fetchScopes()
   } catch (e: unknown) {
-    showError(normalizeError(e).message)
+    showError(normalizeError(e))
   }
 }
 
@@ -127,10 +136,10 @@ onMounted(fetchScopes)
       {{ successMessage }}
     </div>
     <div
-      v-if="errorMessage"
+      v-if="errorText"
       class="mb-4 p-3 bg-error-50 border border-error-200 text-error-700 rounded-md text-sm"
     >
-      {{ errorMessage }}
+      {{ errorText }}
     </div>
 
     <div
