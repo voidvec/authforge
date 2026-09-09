@@ -3,15 +3,38 @@
 #include <fulla/storage/postgres/models/Roles.h>
 #include <fulla/storage/postgres/models/UserRoles.h>
 #include <fulla/drogon/utils/PasswordHasher.h>
+#include <fulla/drogon/utils/CryptoUtils.h>
 #include <fulla/common/utils/EmailNormalizer.h>
 #include <drogon/utils/Utilities.h>
 #include <algorithm>
+#include <cctype>
 
 using namespace drogon;
 using namespace ::drogon::orm;
 
 namespace fulla::drogon::services
 {
+
+namespace
+{
+// U-2 (browser-e2e 2026-09-08): generated username for email-first
+// registrations that leave the username blank. Same shape as the identity
+// AuthService's generator ("user_<8 lowercase hex>", charset-safe for Rule.h
+// USERNAME_PATTERN); uniqueness is enforced by the users table and the
+// registerUser retry loop covers the rare collision.
+std::string generateUsername()
+{
+    // hashToken returns UPPERCASE hex; USERNAME_PATTERN allows mixed case,
+    // but lowercase matches the identity-side generator byte-for-byte.
+    std::string hex = fulla::drogon::utils::hashToken(
+      fulla::drogon::utils::generateSecureToken(32)
+    );
+    std::transform(hex.begin(), hex.end(), hex.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return "user_" + hex.substr(0, 8);
+}
+}  // namespace
 
 void AuthService::validateUser(
   const std::string &identifier,
@@ -198,27 +221,38 @@ void AuthService::registerUser(
         return;
     }
 
-    drogon_model::fulla_db::Users newUser;
-    // username is optional in email-first model: leave NULL when absent
-    // (CHECK constraint forbids empty string, so only set when non-empty)
-    if (!username.empty())
-        newUser.setUsername(username);
-    newUser.setPasswordHash(passwordHash);
-    newUser.setSalt(salt);
-    if (!email.empty())
-        newUser.setEmail(fulla::common::utils::normalizeEmail(email));
+    // U-2: deliver the registration form's "leave the username blank and one
+    // is generated" promise (previously stored NULL, which read back as ""
+    // in the account center and defeated the Danger Zone confirm guard).
+    const bool generatedUsername = username.empty();
+    auto currentUser = std::make_shared<std::string>(
+      generatedUsername ? generateUsername() : username
+    );
+    auto attempts = std::make_shared<int>(0);
+    auto attemptCreate = std::make_shared<std::function<void()>>();
 
-    try
-    {
-        auto db = app().getDbClient();
-        // Start Transaction? For now, just chain.
+    *attemptCreate = [sharedCb, salt, passwordHash, email, generatedUsername, currentUser,
+                      attempts, attemptCreate]() {
+        drogon_model::fulla_db::Users newUser;
+        // CHECK constraint forbids the empty string; generated names and
+        // user-typed names are both non-empty here.
+        newUser.setUsername(*currentUser);
+        newUser.setPasswordHash(passwordHash);
+        newUser.setSalt(salt);
+        if (!email.empty())
+            newUser.setEmail(fulla::common::utils::normalizeEmail(email));
 
-        auto mapper = Mapper<drogon_model::fulla_db::Users>(db);
+        try
+        {
+            auto db = app().getDbClient();
+            // Start Transaction? For now, just chain.
 
-        // Async Insert
-        mapper.insert(
-          newUser,
-          [sharedCb, db](const drogon_model::fulla_db::Users &u) {
+            auto mapper = Mapper<drogon_model::fulla_db::Users>(db);
+
+            // Async Insert
+            mapper.insert(
+              newUser,
+              [sharedCb, db](const drogon_model::fulla_db::Users &u) {
               // Assign Default Role "user"
               try
               {
@@ -272,14 +306,25 @@ void AuthService::registerUser(
                   (*sharedCb)("");
               }
           },
-          [sharedCb](const DrogonDbException &e) {
+          [sharedCb, generatedUsername, currentUser, attempts, attemptCreate](const DrogonDbException &e) {
               const std::string what = e.base().what();
               LOG_ERROR << "Register Failed: " << what;
               // Map the failing DB constraint to a structured Error_Code so the
               // controller can forward it verbatim. Username conflict is checked
               // before email so a simultaneous conflict reports username first.
               if (what.find("users_username_key") != std::string::npos)
+              {
+                  // A GENERATED name can collide with an existing one; retry
+                  // with a fresh name instead of surfacing "username taken"
+                  // to a user who never typed a username.
+                  if (generatedUsername && ++(*attempts) < 3)
+                  {
+                      *currentUser = generateUsername();
+                      (*attemptCreate)();
+                      return;
+                  }
                   (*sharedCb)("VALIDATION_USERNAME_TAKEN");
+              }
               else if (what.find("idx_users_email_unique") != std::string::npos)
                   (*sharedCb)("VALIDATION_EMAIL_TAKEN");
               else
@@ -297,6 +342,9 @@ void AuthService::registerUser(
         LOG_ERROR << "Register Init Unknown Exception";
         (*sharedCb)("INTERNAL_ERROR");
     }
+    };
+
+    (*attemptCreate)();
 }
 
 void AuthService::getUserInfo(

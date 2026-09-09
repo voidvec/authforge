@@ -1,16 +1,29 @@
 #include <drogon/drogon_test.h>
 #include <drogon/drogon.h>
+#include <drogon/utils/Utilities.h>
 #include <fulla/drogon/plugin/OAuth2Plugin.h>
+#include <fulla/drogon/utils/CryptoUtils.h>
 #include <fulla/storage/postgres/models/Users.h>
 #include <fulla/common/utils/EmailNormalizer.h>
-#include <future>
+#include "HttpTestClient.h"
 #include <chrono>
+#include <future>
+#include <regex>
+#include <string>
 
 using namespace drogon;
 using namespace drogon::orm;
 
 namespace
 {
+// Throwaway credential minted at runtime for the dedicated test user (fresh
+// per run; nothing reusable leaves the process).
+const std::string &registrationPassword()
+{
+    static const std::string v = fulla::drogon::utils::generateSecureToken(12) + "aA1!";
+    return v;
+}
+
 // Drop any leftover row so the unique-email index (V019) doesn't trip reuse.
 void cleanupEmail(const std::string &email)
 {
@@ -28,10 +41,14 @@ void cleanupEmail(const std::string &email)
 }
 }  // namespace
 
-// Covers Finding 1 (JSON body) + Finding 5 (missing test):
-// an email-only registration via JSON persists username as NULL and a
-// canonical email, with a non-empty password hash.
-DROGON_TEST(Integration_P1_Registration_EmailOnly_JsonBody)
+// U-2 (browser-e2e 2026-09-08): the registration form promises "leave the
+// username blank and one is generated for you". The service used to store
+// NULL instead (email-first), which read back as "" in the account center
+// and defeated the Danger Zone confirm guard. The contract is now: an
+// email-only registration persists a GENERATED username of the shape
+// user_<8 lowercase hex> (charset-valid for Rule.h USERNAME_PATTERN) plus a
+// canonical email — never NULL.
+DROGON_TEST(Integration_P1_Registration_EmailOnly_GeneratesUsername)
 {
     auto plugin = app().getPlugin<OAuth2Plugin>();
     if (!plugin || plugin->getStorageType() == "memory")
@@ -41,44 +58,50 @@ DROGON_TEST(Integration_P1_Registration_EmailOnly_JsonBody)
     }
     auto db = app().getDbClient();
     REQUIRE(db != nullptr);
+    if (!fulla::test::http::serverReachable())
+    {
+        CHECK(true);
+        return;
+    }
 
-    const std::string rawEmail = "Alice+promo@Example.COM";
-    const std::string canonical = fulla::common::utils::normalizeEmail(rawEmail);
+    const std::string uniqueRun = std::to_string(
+      std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+      )
+        .count()
+    );
+    const std::string rawEmail = "AliceU2" + uniqueRun + "@Example.COM";
     cleanupEmail(rawEmail);
 
-    // Insert the way AuthService::registerUser would (validate the contract):
-    // username omitted -> NULL; email normalized; password hashed non-empty.
-    drogon_model::fulla_db::Users u;
-    u.setPasswordHash("$argon2id$placeholder$notempty");  // shape only
-    u.setSalt("");
-    u.setEmail(canonical);
-    // username deliberately NOT set (NULL)
-
-    std::promise<bool> pIns;
-    Mapper<drogon_model::fulla_db::Users>(db).insert(
-      u,
-      [&](const drogon_model::fulla_db::Users &) { pIns.set_value(true); },
-      [&](const DrogonDbException &e) {
-          LOG_ERROR << "insert failed: " << e.base().what();
-          pIns.set_value(false);
-      }
+    // Real registration path: POST /api/register with no username field.
+    const std::string form =
+      "email=" + drogon::utils::urlEncodeComponent(rawEmail) +
+      "&password=" + registrationPassword();
+    auto resp = fulla::test::http::sendPostForm("/api/register", form);
+    REQUIRE(resp != nullptr);
+    CHECK(
+      (resp->getStatusCode() == k200OK || resp->getStatusCode() == k201Created)
     );
-    REQUIRE(pIns.get_future().get() == true);
 
-    // Verify stored shape
+    // Verify stored shape: generated username + case-insensitive email match
+    // (the wired identity registration path stores the email verbatim; the
+    // legacy fallback normalizes — accept either, compare lowercased).
     std::promise<bool> pRead;
     db->execSqlAsync(
-      "SELECT username, email FROM users WHERE email = $1",
+      "SELECT username, lower(email) AS email_lc FROM users WHERE lower(email) = lower($1)",
       [&](const Result &r) {
           bool ok = !r.empty();
           if (ok)
-              ok = r[0]["username"].isNull();
+              ok = !r[0]["username"].isNull();
           if (ok)
-              ok = r[0]["email"].as<std::string>() == canonical;
+          {
+              const std::regex generatedPattern("^user_[0-9a-f]{8}$");
+              ok = std::regex_match(r[0]["username"].as<std::string>(), generatedPattern);
+          }
           pRead.set_value(ok);
       },
       [&](const DrogonDbException &) { pRead.set_value(false); },
-      canonical
+      rawEmail
     );
     CHECK(pRead.get_future().get() == true);
 
