@@ -21,6 +21,12 @@ export const useAuthStore = defineStore('auth', () => {
   })
   const tokenPresent = ref(!!getAccessToken() || !!getRefreshToken())
   const sessionRestored = ref(false)
+  // PR #180 review M3: restoreSession() used to set `sessionRestored` before
+  // awaiting, so the guest guard's `if (!sessionRestored) await` never
+  // waited — the optimistic tokenPresent flag decided the bounce. Cache the
+  // in-flight promise instead: concurrent callers join the same restore, and
+  // the flag flips only when the restore actually finished.
+  let restorePromise: Promise<boolean> | null = null
 
   const isAuthenticated = computed(() => tokenPresent.value)
 
@@ -28,19 +34,29 @@ export const useAuthStore = defineStore('auth', () => {
   function markUnauthenticated() { tokenPresent.value = false }
 
   /** Restore session from refresh_token on page reload */
-  async function restoreSession(): Promise<boolean> {
-    if (sessionRestored.value) return !!getAccessToken()
-    sessionRestored.value = true
-    if (getAccessToken()) return true
-    if (!getRefreshToken()) { markUnauthenticated(); return false }
-    const restored = await tryRestoreSession()
-    if (restored) {
-      markAuthenticated()
-      await fetchUser()
-    } else {
-      markUnauthenticated()
-    }
-    return restored
+  function restoreSession(): Promise<boolean> {
+    if (restorePromise) return restorePromise
+    restorePromise = (async () => {
+      if (getAccessToken()) {
+        sessionRestored.value = true
+        return true
+      }
+      if (!getRefreshToken()) {
+        markUnauthenticated()
+        sessionRestored.value = true
+        return false
+      }
+      const restored = await tryRestoreSession()
+      if (restored) {
+        markAuthenticated()
+        await fetchUser()
+      } else {
+        markUnauthenticated()
+      }
+      sessionRestored.value = true
+      return restored
+    })()
+    return restorePromise
   }
 
   async function login(username: string, password: string): Promise<LoginResult> {
@@ -79,8 +95,8 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function exchangeCode(code: string) {
-    await authService.exchangeCode(code)
+  async function exchangeCode(code: string, state?: string) {
+    await authService.exchangeCode(code, state)
     markAuthenticated()
     await fetchUser()
   }

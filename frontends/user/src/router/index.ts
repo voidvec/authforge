@@ -94,22 +94,26 @@ const router = createRouter({
 router.beforeEach(async (to, _from, next) => {
   const auth = useAuthStore()
 
-  // Try to restore session on first navigation to protected route
+  // Try to restore session on first navigation to protected route. The
+  // restore is a cached singleton promise (stores/auth) — awaiting it here
+  // joins the store-init restore rather than racing it. The decision uses
+  // the CURRENT isAuthenticated, never the promise result: the cached
+  // result may predate a logout/token revocation.
   if (to.meta.auth && !auth.isAuthenticated) {
-    const restored = await auth.restoreSession()
-    if (restored) {
+    await auth.restoreSession()
+    if (auth.isAuthenticated) {
       next()
       return
     }
     next({ name: 'login', query: { redirect: to.fullPath } })
   } else if (to.meta.guest) {
-    // U-1 (browser-e2e 2026-09-08): isAuthenticated starts OPTIMISTICALLY true
-    // whenever a refresh_token sits in localStorage. If the token was revoked
-    // server-side (e.g. password changed elsewhere), that optimistic flag
-    // used to bounce the user off /login into a zombie dashboard of 401s.
-    // Restore first — restoreSession() clears the flag when the refresh
-    // token is dead — then decide.
-    if (!auth.sessionRestored) await auth.restoreSession()
+    // U-1 (browser-e2e 2026-09-08): isAuthenticated starts OPTIMISTICALLY
+    // true whenever a refresh_token sits in localStorage. If the token was
+    // revoked server-side (e.g. password changed elsewhere), that optimistic
+    // flag used to bounce the user off /login into a zombie dashboard of
+    // 401s. Await the restore — it clears the flag when the refresh token
+    // is dead — then decide on the live value.
+    await auth.restoreSession()
     if (auth.isAuthenticated) {
       next({ name: 'dashboard' })
     } else {

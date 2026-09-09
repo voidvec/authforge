@@ -56,18 +56,20 @@ onMounted(async () => {
     return
   }
 
-  // U-4 (browser-e2e 2026-09-08): redeeming a code without OUR PKCE verifier
-  // always fails (PKCE is force-enabled server-side) and consumes the
-  // one-time code that the flow's initiator still needs. Only redeem when
-  // this SPA stashed a verifier for the flow; otherwise this landing is on
-  // behalf of an external application.
-  if (!authService.hasStashedVerifier()) {
+  // U-4 (browser-e2e 2026-09-08; state binding per PR #180 review M6):
+  // redeeming a code without OUR verifier for THIS flow always fails (PKCE
+  // is force-enabled server-side) and consumes the one-time code that the
+  // flow's initiator still needs. The verifier stash is state-correlated,
+  // so a stale stash from an abandoned login cannot qualify an external
+  // landing either.
+  const state = typeof route.query.state === 'string' ? route.query.state : ''
+  if (!authService.hasVerifierForState(state)) {
     externalFlow.value = true
     return
   }
 
   try {
-    await auth.exchangeCode(code)
+    await auth.exchangeCode(code, state)
     router.replace('/')
   } catch (e: unknown) {
     error.value = normalizeError(e)

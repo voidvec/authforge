@@ -76,16 +76,21 @@ test.describe('Callback Page', () => {
   })
 
   // U-4: the page only redeems a code when THIS SPA holds the PKCE verifier
-  // for the flow (sessionStorage 'pkce_code_verifier'). Without it the code
-  // belongs to an external app's flow and redeeming here would only burn it.
-  async function seedVerifier(page: import('@playwright/test').Page) {
-    await page.addInitScript(() => {
-      sessionStorage.setItem('pkce_code_verifier', 'mock-verifier-e2e-seeded')
-    })
+  // for THE FLOW — the stash is { state, verifier } JSON and its state must
+  // match the callback's state (PR #180 review M6). Without a matching stash
+  // the code belongs to an external app's flow and redeeming here would only
+  // burn it.
+  async function seedVerifier(page: import('@playwright/test').Page, state: string) {
+    await page.addInitScript((s: string) => {
+      sessionStorage.setItem(
+        'pkce_code_verifier',
+        JSON.stringify({ state: s, verifier: 'mock-verifier-e2e-seeded' }),
+      )
+    }, state)
   }
 
   test('exchanges code for token and redirects', async ({ page }) => {
-    await seedVerifier(page)
+    await seedVerifier(page, 'test-state')
     await page.goto('/callback?code=test-auth-code&state=test-state')
     // After successful token exchange, should redirect to /
     await expect(page).toHaveURL('/', { timeout: 10000 })
@@ -115,8 +120,23 @@ test.describe('Callback Page', () => {
     await expect(page).toHaveURL(/\/callback/)
   })
 
+  test('stale verifier from another flow (state mismatch) is not used to redeem', async ({ page }) => {
+    // M6: a stash left behind by an abandoned login must not qualify an
+    // externally-initiated landing — state is the correlation key.
+    let tokenCalled = false
+    await page.route('**/oauth2/token', async (route) => {
+      tokenCalled = true
+      await route.fulfill({ status: 400, contentType: 'application/json', body: '{}' })
+    })
+    await seedVerifier(page, 'login-flow-state')
+    await page.goto('/callback?code=external-code&state=external-state')
+    await expect(page.getByTestId('callback-external-flow')).toBeVisible()
+    await page.waitForTimeout(300)
+    expect(tokenCalled).toBe(false)
+  })
+
   test('loading spinner shown while exchanging code', async ({ page }) => {
-    await seedVerifier(page)
+    await seedVerifier(page, 'test-state')
     // Delay token exchange to observe spinner
     await page.route('**/oauth2/token', async (route) => {
       await new Promise(resolve => setTimeout(resolve, 800))

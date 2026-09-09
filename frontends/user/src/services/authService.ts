@@ -6,27 +6,63 @@ const CLIENT_ID = import.meta.env.VITE_CLIENT_ID || 'vue-client'
 const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || window.location.origin + '/callback'
 
 /**
- * Session-storage key for the PKCE code_verifier in the browser-redirect flow.
+ * Session-storage key for the PKCE code_verifier of the SPA's own login
+ * flow, stored as JSON `{ state, verifier }`.
  *
- * The SPA POST-login flow (authService.login) keeps the verifier in a closure
- * across the two-step login+exchange, so it never needs to persist. But when a
- * third-party app initiates `/oauth2/authorize` → browser redirect → CallbackPage,
- * the page reloads and the verifier must survive it. The authorize redirect is
- * the only place this key is written/read.
+ * The plain POST-login flow (authService.login) keeps the verifier in a
+ * closure across the two-step login+exchange, so it normally never needs to
+ * persist. The exception is the MFA branch: the challenge may span a page
+ * interaction boundary, so the verifier (paired with the login's `state`)
+ * is stashed there for verifyMfa/exchangeCode.
+ *
+ * PR #180 review M6 (RFC 7636 §4.6): the verifier only redeems codes of the
+ * flow it was minted for, so `state` is the correlation key — a stash left
+ * behind by a failed/abandoned MFA login must NOT qualify a later
+ * externally-initiated /callback landing.
  */
 const PKCE_VERIFIER_KEY = 'pkce_code_verifier'
 
+interface PkceStash {
+  state: string
+  verifier: string
+}
+
+function readPkceStash(): PkceStash | null {
+  try {
+    const raw = sessionStorage.getItem(PKCE_VERIFIER_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<PkceStash>
+    if (typeof parsed.state === 'string' && typeof parsed.verifier === 'string') {
+      return { state: parsed.state, verifier: parsed.verifier }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writePkceStash(stash: PkceStash) {
+  sessionStorage.setItem(PKCE_VERIFIER_KEY, JSON.stringify(stash))
+}
+
+function clearPkceStash() {
+  sessionStorage.removeItem(PKCE_VERIFIER_KEY)
+}
+
 export const authService = {
   /**
-   * U-4 (browser-e2e 2026-09-08): true when THIS SPA holds the PKCE verifier
-   * for the flow that produced a /callback landing. PKCE is force-enabled
-   * server-side, so without our verifier a code cannot be redeemed here —
-   * attempting it only burns the one-time code that belongs to the flow's
-   * real initiator (an external app that drove the user through authorize).
-   * CallbackPage uses this to decide exchange vs. "return to your app".
+   * U-4 (browser-e2e 2026-09-08): true when THIS SPA holds the PKCE
+   * verifier FOR THIS FLOW — the stash's `state` must equal the `state` the
+   * callback was reached with. PKCE is force-enabled server-side, so
+   * redeeming a code without the matching verifier would only burn the
+   * one-time code that belongs to the flow's real initiator (an external
+   * app that drove the user through authorize). CallbackPage uses this to
+   * decide exchange vs. "return to your app".
    */
-  hasStashedVerifier(): boolean {
-    return sessionStorage.getItem(PKCE_VERIFIER_KEY) !== null
+  hasVerifierForState(state?: string | null): boolean {
+    if (!state) return false
+    const stash = readPkceStash()
+    return stash !== null && stash.state === state
   },
   async login(username: string, password: string, scope = 'openid profile email'): Promise<LoginResult> {
     // PKCE (RFC 7636): generate a verifier/challenge pair so the backend's
@@ -35,23 +71,23 @@ export const authService = {
     // return JSON (not a browser redirect), so the page does not reload and
     // the closure survives to the token-exchange step below.
     const pkce = await generatePkcePair()
+    const state = crypto.randomUUID()
 
     const resp = await http.post('/oauth2/login', new URLSearchParams({
       username, password,
       client_id: CLIENT_ID,
       redirect_uri: REDIRECT_URI,
       scope,
-      state: crypto.randomUUID(),
+      state,
       code_challenge: pkce.challenge,
       code_challenge_method: pkce.method,
       json: 'true',
     }))
 
     if (resp.data.mfa_required) {
-      // MFA path: stash the verifier so verifyMfa() can thread it through to
-      // the MFA code-exchange. Stored in sessionStorage (not memory) because
-      // the MFA challenge may span a page interaction boundary.
-      sessionStorage.setItem(PKCE_VERIFIER_KEY, pkce.verifier)
+      // MFA path: stash the verifier (bound to this flow's state) so
+      // verifyMfa() can thread it through to the MFA code-exchange.
+      writePkceStash({ state, verifier: pkce.verifier })
       return { mfaRequired: true, mfaToken: resp.data.mfa_token }
     }
 
@@ -79,12 +115,12 @@ export const authService = {
   },
 
   async verifyMfa(mfaToken: string, code: string): Promise<LoginResult> {
-    // The PKCE verifier generated during login() — needed if the backend
-    // MFA path threads the challenge through to the token exchange. It is
-    // consumed only on success: clearing it on a wrong-code attempt would
-    // make the retry fail PKCE (the token exchange rejects an empty verifier
-    // whenever a challenge is bound to the code).
-    const codeVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || ''
+    // The PKCE verifier stashed by login()'s MFA branch — needed if the
+    // backend MFA path threads the challenge through to the token exchange.
+    // It is consumed only on success: clearing it on a wrong-code attempt
+    // would make the retry fail PKCE (the token exchange rejects an empty
+    // verifier whenever a challenge is bound to the code).
+    const codeVerifier = readPkceStash()?.verifier ?? ''
 
     const params = new URLSearchParams({
       mfa_token: mfaToken,
@@ -96,7 +132,7 @@ export const authService = {
 
     const resp = await http.post<TokenResponse>('/oauth2/mfa/verify', params)
     if (resp.data.access_token) {
-      sessionStorage.removeItem(PKCE_VERIFIER_KEY)
+      clearPkceStash()
       setTokens(resp.data.access_token, resp.data.refresh_token)
       return { success: true }
     }
@@ -118,20 +154,25 @@ export const authService = {
   /**
    * Exchange an authorization code for tokens (browser-redirect flow).
    * Called by CallbackPage after `/oauth2/authorize` redirects back with
-   * `?code=...`. The PKCE verifier was stashed in sessionStorage before the
-   * authorize redirect (see exchangeCode callers).
+   * `?code=...`. Only redeemable when the stashed verifier belongs to THIS
+   * flow (`state` matches — RFC 7636 §4.6 correlation, PR #180 review M6);
+   * the stash is consumed either way so an abandoned login cannot qualify a
+   * later landing.
    */
-  async exchangeCode(code: string): Promise<void> {
-    const codeVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || ''
-    if (codeVerifier) sessionStorage.removeItem(PKCE_VERIFIER_KEY)
+  async exchangeCode(code: string, state?: string): Promise<void> {
+    const stash = readPkceStash()
+    clearPkceStash()
+    if (!stash || !state || stash.state !== state) {
+      throw new Error('No PKCE verifier matching this authorization flow')
+    }
 
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
       redirect_uri: REDIRECT_URI,
       client_id: CLIENT_ID,
+      code_verifier: stash.verifier,
     })
-    if (codeVerifier) params.set('code_verifier', codeVerifier)
 
     const resp = await http.post<TokenResponse>('/oauth2/token', params)
     setTokens(resp.data.access_token, resp.data.refresh_token)

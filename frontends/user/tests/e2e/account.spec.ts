@@ -160,15 +160,6 @@ test.describe('Security', () => {
   })
 
   test('can change password (drops session and lands on /login with a notice)', async ({ page }) => {
-    // loginUser seeds refresh_token via addInitScript, which re-runs on the
-    // FULL page load the password change triggers — resurrecting a session
-    // the app just cleared. Simulate the real state: on the post-change
-    // login load, no refresh token exists anymore.
-    await page.addInitScript(() => {
-      if (location.pathname === '/login' && location.search.includes('pw_changed=1')) {
-        localStorage.removeItem('refresh_token')
-      }
-    })
     await page.locator('input[autocomplete="current-password"]').fill('oldpass')
     const newPassFields = page.locator('input[autocomplete="new-password"]')
     await newPassFields.first().fill('NewPass123!')
@@ -176,7 +167,8 @@ test.describe('Security', () => {
     await page.locator('button:has-text("Change Password")').click()
     // U-1: the server revoked every session as part of the change; the SPA
     // must drop its local state and land on /login with a notice (not stay
-    // on /security in a zombie authenticated state).
+    // on /security in a zombie authenticated state). M9: SPA navigation, so
+    // no seeded-refresh-token resurrection can occur either.
     await expect(page).toHaveURL(/\/login\?pw_changed=1/, { timeout: 10000 })
     await expect(page.getByTestId('password-changed-notice')).toBeVisible()
   })
