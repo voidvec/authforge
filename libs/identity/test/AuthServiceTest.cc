@@ -447,6 +447,111 @@ TEST_F(AuthServiceTest, GetUserInfoReturnsNulloptForUnknownUser)
     EXPECT_FALSE(info.has_value());
 }
 
+// U-2 (PR #180): blank-username registrations generate "user_<8 hex>".
+// These fakes drive the two new branches of that path: a generated-name
+// collision (retry) and RNG unavailability (fail-closed).
+namespace
+{
+class FlakyGeneratedNameRepository : public InMemoryUserRepository
+{
+  public:
+    void create(
+      const UserData &userData,
+      std::function<void(std::optional<int32_t>, std::string)> &&cb
+    ) override
+    {
+        if (
+          !userData.username.empty() && userData.username.rfind("user_", 0) == 0
+          && generatedCreateCalls_++ == 0
+        )
+        {
+            // First attempt at a generated name reports a collision; the
+            // retry must come back with a FRESH name and succeed.
+            cb(std::nullopt, "VALIDATION_USERNAME_TAKEN");
+            return;
+        }
+        if (!userData.username.empty() && userData.username.rfind("user_", 0) == 0)
+        {
+            ++generatedCreateCalls_;
+        }
+        InMemoryUserRepository::create(userData, std::move(cb));
+    }
+
+    int generatedCreateCalls() const
+    {
+        return generatedCreateCalls_;
+    }
+
+  private:
+    int generatedCreateCalls_ = 0;
+};
+
+class FailingRandomCrypto : public FakeCryptoProvider
+{
+  public:
+    bool secureRandomBytes(unsigned char * /*buffer*/, size_t /*length*/) override
+    {
+        return false;
+    }
+};
+}  // namespace
+
+TEST_F(AuthServiceTest, RegisterBlankUsernameRetriesOnGeneratedNameCollision)
+{
+    auto flakyRepo = std::make_shared<FlakyGeneratedNameRepository>();
+    service = std::make_unique<AuthService>(flakyRepo, crypto, clock);
+
+    std::string errorCode;
+    service->registerUser("", "pw", "retry@example.com", [&](const std::string &err) {
+        errorCode = err;
+    });
+    EXPECT_EQ(errorCode, "");
+    EXPECT_GE(flakyRepo->generatedCreateCalls(), 2);
+
+    // The surviving account is the RETRY's identity, reachable by email.
+    std::optional<AuthResult> login;
+    service->validateUser("retry@example.com", "pw", [&](std::optional<AuthResult> r) {
+        login = r;
+    });
+    EXPECT_TRUE(login.has_value());
+}
+
+TEST_F(AuthServiceTest, RegisterBlankUsernameFailsClosedWhenRandomUnavailable)
+{
+    crypto = std::make_shared<FailingRandomCrypto>();
+    service = std::make_unique<AuthService>(repo, crypto, clock);
+
+    std::string errorCode = "unset";
+    service->registerUser("", "pw", "rngfail@example.com", [&](const std::string &err) {
+        errorCode = err;
+    });
+    EXPECT_EQ(errorCode, "INTERNAL_ERROR");
+
+    // Fail-closed: no account exists.
+    std::optional<AuthResult> login;
+    service->validateUser("rngfail@example.com", "pw", [&](std::optional<AuthResult> r) {
+        login = r;
+    });
+    EXPECT_FALSE(login.has_value());
+}
+
+// PR #180 review M7: both registration and login canonicalize the email,
+// so a mixed-case registration is reachable from any-case input.
+TEST_F(AuthServiceTest, RegisterNormalizesEmailAndCaseInsensitiveLogin)
+{
+    std::string errorCode;
+    service->registerUser("dana", "pw", "Dana@Example.COM", [&](const std::string &err) {
+        errorCode = err;
+    });
+    ASSERT_EQ(errorCode, "");
+
+    std::optional<AuthResult> login;
+    service->validateUser("dana@example.com", "pw", [&](std::optional<AuthResult> r) {
+        login = r;
+    });
+    EXPECT_TRUE(login.has_value());
+}
+
 // Task 24 slice 4 (fulla-sdk-refactor): AuthService::registerUser must
 // forward the repository's structured Error_Code verbatim (not collapse
 // every failure into a generic code) -- mirrors OAuth2Server/
