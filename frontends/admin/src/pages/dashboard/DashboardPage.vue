@@ -23,10 +23,11 @@ const errorText = computed(() => {
 
 // GET /health/ready value domains (HealthController): status ∈ {ok, degraded,
 // unhealthy}, database ∈ {connected, not_configured, disconnected,
-// unavailable}, redis ∈ {connected, not_configured, disconnected}.
+// unavailable}, redis ∈ {connected, not_configured, disconnected, timeout}.
 // Gap-fix E3: the old template hardcoded green dots and a 'Connected'
 // fallback, rendering disconnected/degraded components as healthy.
 // not_configured is a healthy state (the backend reports status=ok with it).
+// 'timeout' is the backend's 2s Redis-ping guard (A-1) — degraded, red dot.
 function componentDotClass(value: string | undefined): string {
   if (!value || value === 'connected' || value === 'not_configured') return 'bg-success-500'
   return 'bg-error-500'
@@ -40,20 +41,33 @@ const overall = computed(() => {
 })
 
 onMounted(async () => {
-  try {
-    const [healthResp, statsResp] = await Promise.all([
-      axios.get('/health/ready'),
-      axios.get('/api/admin/dashboard/stats'),
-    ])
-    health.value = healthResp.data
-    stats.value = statsResp.data
-  } catch (e) {
-    const normalized = normalizeError(e)
-    errorMessage.value = normalized
-    health.value = { status: 'error' }
-  } finally {
-    loading.value = false
+  // A-1 (browser-e2e 2026-09-08): /health/ready can hang when Redis is
+  // configured but unreachable (backend now self-times-out at 2s, but the
+  // frontend must not chain the two requests either). allSettled + explicit
+  // timeouts let the stats cards render even when readiness never answers;
+  // health failure only degrades the health card, not the whole dashboard.
+  const [healthResult, statsResult] = await Promise.allSettled([
+    // Accept the probe's own 503 (degraded) body so the health card can show
+    // WHICH component is down; only transport failures/timeouts reject.
+    axios.get('/health/ready', {
+      timeout: 8000,
+      validateStatus: (s: number) => (s >= 200 && s < 300) || s === 503,
+    }),
+    axios.get('/api/admin/dashboard/stats', { timeout: 8000 }),
+  ])
+  if (statsResult.status === 'fulfilled') {
+    stats.value = statsResult.value.data
+  } else {
+    errorMessage.value = normalizeError(statsResult.reason)
   }
+  if (healthResult.status === 'fulfilled') {
+    health.value = healthResult.value.data
+  } else {
+    // Readiness did not answer in time: show the health card in error state
+    // without a page-level banner — stats (if fulfilled) are still accurate.
+    health.value = { status: 'error' }
+  }
+  loading.value = false
 })
 </script>
 
