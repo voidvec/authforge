@@ -3,6 +3,8 @@
 #include <drogon/drogon.h>
 #include <json/json.h>
 
+#include <atomic>
+
 namespace fulla::drogon::controllers
 {
 
@@ -110,24 +112,40 @@ void HealthController::healthReady(
               try
               {
                   auto redis = ::drogon::app().getRedisClient("default");
-                  redis->execCommandAsync(
-                    [sharedCb](const ::drogon::nosql::RedisResult &) {
+                  // Drogon's Redis client with no ready connection queues the
+                  // PING (both callbacks attached) in an internal buffer and,
+                  // on connect failure, only schedules a reconnect — the
+                  // queued callbacks are never invoked. Guard readiness with
+                  // a one-shot timeout so the endpoint always answers; first
+                  // answer wins, the losers no-op (health-status body contract
+                  // identical to the disconnected branch).
+                  auto responded = std::make_shared<std::atomic<bool>>(false);
+                  auto answer =
+                    [sharedCb, responded](bool redisOk, const char *redisState) {
+                        bool expected = false;
+                        if (!responded->compare_exchange_strong(expected, true))
+                            return;
                         Json::Value json;
-                        json["status"] = "ok";
+                        json["status"] = redisOk ? "ok" : "degraded";
                         json["database"] = "connected";
-                        json["redis"] = "connected";
-                        (*sharedCb)(::drogon::HttpResponse::newHttpJsonResponse(json));
-                    },
-                    [sharedCb](const std::exception &) {
-                        Json::Value json;
-                        json["status"] = "degraded";
-                        json["database"] = "connected";
-                        json["redis"] = "disconnected";
+                        json["redis"] = redisState;
                         auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
-                        resp->setStatusCode(::drogon::k503ServiceUnavailable);
+                        if (!redisOk)
+                            resp->setStatusCode(::drogon::k503ServiceUnavailable);
                         (*sharedCb)(resp);
+                    };
+                  redis->execCommandAsync(
+                    [answer](const ::drogon::nosql::RedisResult &) {
+                        answer(true, "connected");
+                    },
+                    [answer](const std::exception &) {
+                        answer(false, "disconnected");
                     },
                     "PING"
+                  );
+                  ::drogon::app().getLoop()->runAfter(
+                    2.0,
+                    [answer]() { answer(false, "timeout"); }
                   );
               }
               catch (...)
