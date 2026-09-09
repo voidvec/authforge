@@ -113,8 +113,8 @@ echo "✅ Models backed up to $backup_dir"
 
 ```powershell
 # Windows PowerShell
-# 进入 ORM 模型源码目录（.cc 所在）
-cd d:\work\development\Repos\cpp\projects\fulla\libs\storage-postgres\src\models
+# 进入 ORM 模型源码目录（.cc 所在，从仓库根目录出发）
+cd libs\storage-postgres\src\models
 
 # 创建 models 目录（如果不存在）
 if (!(Test-Path "models")) {
