@@ -75,7 +75,17 @@ test.describe('Callback Page', () => {
     await setupMocks(page)
   })
 
+  // U-4: the page only redeems a code when THIS SPA holds the PKCE verifier
+  // for the flow (sessionStorage 'pkce_code_verifier'). Without it the code
+  // belongs to an external app's flow and redeeming here would only burn it.
+  async function seedVerifier(page: import('@playwright/test').Page) {
+    await page.addInitScript(() => {
+      sessionStorage.setItem('pkce_code_verifier', 'mock-verifier-e2e-seeded')
+    })
+  }
+
   test('exchanges code for token and redirects', async ({ page }) => {
+    await seedVerifier(page)
     await page.goto('/callback?code=test-auth-code&state=test-state')
     // After successful token exchange, should redirect to /
     await expect(page).toHaveURL('/', { timeout: 10000 })
@@ -91,7 +101,22 @@ test.describe('Callback Page', () => {
     await expect(page.locator('text=No authorization code')).toBeVisible()
   })
 
+  test('without a local verifier shows the external-flow notice and never touches the token endpoint', async ({ page }) => {
+    let tokenCalled = false
+    await page.route('**/oauth2/token', async (route) => {
+      tokenCalled = true
+      await route.fulfill({ status: 400, contentType: 'application/json', body: '{}' })
+    })
+    await page.goto('/callback?code=external-flow-code&state=st-ext')
+    await expect(page.getByTestId('callback-external-flow')).toBeVisible()
+    await page.waitForTimeout(300)
+    expect(tokenCalled).toBe(false)
+    // Stays on the callback page (nothing to redeem, nowhere to go).
+    await expect(page).toHaveURL(/\/callback/)
+  })
+
   test('loading spinner shown while exchanging code', async ({ page }) => {
+    await seedVerifier(page)
     // Delay token exchange to observe spinner
     await page.route('**/oauth2/token', async (route) => {
       await new Promise(resolve => setTimeout(resolve, 800))

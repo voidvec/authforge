@@ -3,6 +3,7 @@ import { onMounted, computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../../stores/auth'
+import { authService } from '../../services/authService'
 import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
 import { getErrorMessage } from '../../services/messages'
 
@@ -22,6 +23,10 @@ const errorText = computed(() => {
 // Secondary detail: the raw error_description from the redirect, kept only
 // when it exists and adds something the catalog-resolved message lacks.
 const errorDetail = ref('')
+// U-4: the code belongs to a flow this SPA did not initiate (external app
+// drove the user through authorize with its own PKCE verifier) — show the
+// completion notice instead of trying to redeem.
+const externalFlow = ref(false)
 
 onMounted(async () => {
   const code = route.query.code as string
@@ -48,6 +53,16 @@ onMounted(async () => {
 
   if (!code) {
     error.value = t('oauth.callback.noCode')
+    return
+  }
+
+  // U-4 (browser-e2e 2026-09-08): redeeming a code without OUR PKCE verifier
+  // always fails (PKCE is force-enabled server-side) and consumes the
+  // one-time code that the flow's initiator still needs. Only redeem when
+  // this SPA stashed a verifier for the flow; otherwise this landing is on
+  // behalf of an external application.
+  if (!authService.hasStashedVerifier()) {
+    externalFlow.value = true
     return
   }
 
@@ -85,6 +100,30 @@ onMounted(async () => {
         >
           {{ $t('common.backToLogin') }}
         </router-link>
+      </div>
+      <div v-else-if="externalFlow">
+        <div class="w-14 h-14 rounded-2xl bg-success-50 flex items-center justify-center mx-auto mb-4">
+          <svg
+            class="w-7 h-7 text-success-600"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        </div>
+        <p
+          class="text-neutral-900 font-medium"
+          data-testid="callback-external-flow"
+        >
+          {{ $t('oauth.callback.externalFlow') }}
+        </p>
+        <p class="text-neutral-500 text-sm mt-2">
+          {{ $t('oauth.callback.externalFlowHint') }}
+        </p>
       </div>
       <div v-else>
         <div class="animate-spin w-8 h-8 border-4 border-brand-600 border-t-transparent rounded-full mx-auto" />

@@ -78,7 +78,10 @@ export default {
         subtitle: '请输入验证器应用中的 6 位验证码',
         verify: '验证',
         back: '返回登录',
+        codeLabel: '验证码',
       },
+      // U-1：自助改密后跳回 /login 时提示（所有会话已被吊销，需重新登录）。
+      passwordChangedNotice: '密码已修改，请使用新密码重新登录。',
       // #145：首登强制改密（must_change_password 标记）
       passwordChange: {
         title: '修改密码',
@@ -162,6 +165,10 @@ export default {
       errorTitle: '认证失败',
       noCode: '未收到授权码',
       completing: '正在完成登录…',
+      // U-4：携带授权码落地但本 SPA 并非流程发起方（本地无 PKCE
+      // verifier）—— 不动这个 code。
+      externalFlow: '授权完成',
+      externalFlowHint: '你可以关闭此页，返回发起授权的应用。',
     },
     github: {
       errorTitle: 'GitHub 登录失败',
@@ -236,6 +243,9 @@ export default {
         add: '+ 添加安全密钥',
         cancelled: '安全密钥注册已取消',
         timedOut: '安全密钥注册已取消或超时',
+        // M-3：区分 WebAuthn 失败与网络失败（此前经错误适配器一律显示"网络连接失败"）。
+        alreadyRegistered: '此浏览器已为该账户注册过安全密钥。',
+        registrationFailed: '安全密钥注册失败，请重试。',
         success: '安全密钥注册成功',
       },
       social: {

@@ -79,7 +79,11 @@ export default {
         subtitle: 'Enter the 6-digit code from your authenticator app',
         verify: 'Verify Code',
         back: 'Back to sign in',
+        codeLabel: 'Verification code',
       },
+      // U-1: shown on /login after a self-service password change (all
+      // sessions were revoked; a fresh sign-in is required).
+      passwordChangedNotice: 'Password changed. Sign in again with your new password.',
       // #145: forced first-login password change (must_change_password flag)
       passwordChange: {
         title: 'Change Your Password',
@@ -164,6 +168,10 @@ export default {
       errorTitle: 'Authentication Error',
       noCode: 'No authorization code received',
       completing: 'Completing sign in...',
+      // U-4: landed here with a code for a flow this SPA did not initiate
+      // (no local PKCE verifier) — do not touch the code.
+      externalFlow: 'Authorization complete',
+      externalFlowHint: 'You can close this page and return to the application that sent you here.',
     },
     github: {
       errorTitle: 'GitHub Login Failed',
@@ -242,6 +250,10 @@ export default {
         add: '+ Add Passkey',
         cancelled: 'Passkey registration cancelled',
         timedOut: 'Passkey registration was cancelled or timed out',
+        // M-3: distinguish WebAuthn failures from network failures (they used
+        // to surface as "Network connection failed" via the error adapter).
+        alreadyRegistered: 'This browser already has a passkey registered for your account.',
+        registrationFailed: 'Passkey registration failed. Please try again.',
         success: 'Passkey registered successfully!',
       },
       social: {

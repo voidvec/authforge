@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { setupMocks } from './helpers/mock-api'
+import { setupMocks, MOCK_TOKEN_PAIR } from './helpers/mock-api'
 
 test.describe('Login', () => {
   test.beforeEach(async ({ page }) => {
@@ -69,6 +69,85 @@ test.describe('Login', () => {
     await page.goto('/login')
     await page.click('a:has-text("create a new account")')
     await expect(page).toHaveURL('/register')
+  })
+})
+
+// U-3 (browser-e2e 2026-09-08): /oauth2/authorize bounces anonymous users to
+// /login with the OAuth parameters flattened onto the query (no `redirect`
+// param). A successful login must RESUME the flow by navigating back to
+// /oauth2/authorize with every flattened parameter preserved — not drop the
+// user on the dashboard.
+test.describe('Authorize flow resume (U-3)', () => {
+  const authorizeQuery = '/login?client_id=rp-app&redirect_uri=' +
+    encodeURIComponent('https://rp.example.com/cb') +
+    '&scope=openid%20profile&state=st4te123&response_type=code' +
+    '&code_challenge=ch4ll8910&code_challenge_method=S256&nonce=n0nce77'
+
+  test.beforeEach(async ({ page }) => {
+    await setupMocks(page)
+    // The resume is a full-page navigation to the (backend) authorize
+    // endpoint; intercept it so the mock run does not need a live server.
+    await page.route('**/oauth2/authorize*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/plain',
+        body: 'authorize endpoint reached (mock)',
+      })
+    })
+  })
+
+  test('password login resumes authorize with all parameters', async ({ page }) => {
+    await page.goto(authorizeQuery)
+    await page.locator('input[autocomplete="username"]').fill('testuser')
+    await page.locator('input[autocomplete="current-password"]').fill('password123')
+    await page.locator('button[type="submit"]').click()
+    await page.waitForURL(/\/oauth2\/authorize\?/, { timeout: 10000 })
+    const url = new URL(page.url())
+    expect(url.searchParams.get('client_id')).toBe('rp-app')
+    expect(url.searchParams.get('redirect_uri')).toBe('https://rp.example.com/cb')
+    expect(url.searchParams.get('scope')).toBe('openid profile')
+    expect(url.searchParams.get('state')).toBe('st4te123')
+    expect(url.searchParams.get('response_type')).toBe('code')
+    expect(url.searchParams.get('code_challenge')).toBe('ch4ll8910')
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+    expect(url.searchParams.get('nonce')).toBe('n0nce77')
+  })
+
+  test('MFA login resumes authorize with all parameters', async ({ page }) => {
+    await page.route('**/oauth2/login', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ mfa_required: true, mfa_token: 'mfa-token-123' }),
+      })
+    })
+    await page.route('**/oauth2/mfa/verify', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(MOCK_TOKEN_PAIR),
+      })
+    })
+    await page.goto(authorizeQuery)
+    await page.locator('input[autocomplete="username"]').fill('testuser')
+    await page.locator('input[autocomplete="current-password"]').fill('password123')
+    await page.locator('button[type="submit"]').click()
+    await expect(page.locator('input[maxlength="6"]')).toBeVisible()
+    await page.locator('input[maxlength="6"]').fill('123456')
+    await page.locator('button[type="submit"]').click()
+    await page.waitForURL(/\/oauth2\/authorize\?/, { timeout: 10000 })
+    const url = new URL(page.url())
+    expect(url.searchParams.get('client_id')).toBe('rp-app')
+    expect(url.searchParams.get('state')).toBe('st4te123')
+    expect(url.searchParams.get('code_challenge')).toBe('ch4ll8910')
+  })
+
+  test('plain login (no OAuth query) still lands on the dashboard', async ({ page }) => {
+    await page.goto('/login')
+    await page.locator('input[autocomplete="username"]').fill('testuser')
+    await page.locator('input[autocomplete="current-password"]').fill('password123')
+    await page.locator('button[type="submit"]').click()
+    await expect(page).toHaveURL('/', { timeout: 10000 })
   })
 })
 

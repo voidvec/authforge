@@ -159,13 +159,26 @@ test.describe('Security', () => {
     await expect(page.locator('h2:has-text("Two-Factor Authentication")')).toBeVisible()
   })
 
-  test('can change password', async ({ page }) => {
+  test('can change password (drops session and lands on /login with a notice)', async ({ page }) => {
+    // loginUser seeds refresh_token via addInitScript, which re-runs on the
+    // FULL page load the password change triggers — resurrecting a session
+    // the app just cleared. Simulate the real state: on the post-change
+    // login load, no refresh token exists anymore.
+    await page.addInitScript(() => {
+      if (location.pathname === '/login' && location.search.includes('pw_changed=1')) {
+        localStorage.removeItem('refresh_token')
+      }
+    })
     await page.locator('input[autocomplete="current-password"]').fill('oldpass')
     const newPassFields = page.locator('input[autocomplete="new-password"]')
     await newPassFields.first().fill('NewPass123!')
     await newPassFields.nth(1).fill('NewPass123!')
     await page.locator('button:has-text("Change Password")').click()
-    await expect(page.locator('text=Password changed')).toBeVisible()
+    // U-1: the server revoked every session as part of the change; the SPA
+    // must drop its local state and land on /login with a notice (not stay
+    // on /security in a zombie authenticated state).
+    await expect(page).toHaveURL(/\/login\?pw_changed=1/, { timeout: 10000 })
+    await expect(page.getByTestId('password-changed-notice')).toBeVisible()
   })
 
   test('password mismatch shows error', async ({ page }) => {
@@ -229,6 +242,21 @@ test.describe('Security', () => {
     }
   })
 
+  // U-2 (browser-e2e 2026-09-08): blank-username accounts read
+  // profile.username === '', which made '' === '' pass with zero typing and
+  // enabled one-click self-deletion. The button must stay disabled for any
+  // EMPTY confirm input regardless of the profile username.
+  test('danger zone: empty or wrong confirm input keeps delete disabled', async ({ page }) => {
+    const confirmInput = page.locator('#delete-confirm-username')
+    const deleteBtn = page.locator('button:has-text("Delete My Account")')
+    await expect(confirmInput).toBeVisible()
+    // Zero typing (the U-2 one-click path):
+    await expect(deleteBtn).toBeDisabled()
+    // Wrong name:
+    await confirmInput.fill('not-the-username')
+    await expect(deleteBtn).toBeDisabled()
+  })
+
   test('shows MFA enable button when disabled', async ({ page }) => {
     await expect(page.locator('button:has-text("Enable MFA")')).toBeVisible()
   })
@@ -236,6 +264,10 @@ test.describe('Security', () => {
   test('can start MFA setup', async ({ page }) => {
     await page.click('button:has-text("Enable MFA")')
     await expect(page.locator('text=JBSWY3DPEHPK3PXP')).toBeVisible()
+    // U-5: the setup panel renders the otpauth:// URI as a scannable QR
+    // (canvas), not just the manual key.
+    await expect(page.getByTestId('mfa-setup-qr')).toBeVisible()
+    await expect(page.getByTestId('mfa-setup-qr').locator('canvas')).toBeVisible()
   })
 
   test('shows Danger Zone with delete account', async ({ page }) => {

@@ -100,10 +100,28 @@ export const useAuthStore = defineStore('auth', () => {
     markUnauthenticated()
   }
 
+  /**
+   * U-1 (browser-e2e 2026-09-08): drop the LOCAL session state without a
+   * server round-trip. Used after self-service password change: the server
+   * revoked every token for the account as part of the change, so the stored
+   * refresh token is dead weight and must not keep the SPA "optimistically
+   * authenticated" (which bounced the user off /login into a zombie
+   * dashboard).
+   */
+  function logoutLocal() {
+    user.value = null
+    httpClearTokens()
+    markUnauthenticated()
+  }
+
   // Initialize: try to restore session if refresh_token exists
   if (getRefreshToken()) {
     restoreSession()
   }
 
-  return { user, loading, error, errorText, isAuthenticated, login, verifyMfa, exchangeCode, fetchUser, logout, restoreSession, markAuthenticated }
+  return {
+    user, loading, error, errorText, isAuthenticated, sessionRestored,
+    login, verifyMfa, exchangeCode, fetchUser, logout, logoutLocal,
+    restoreSession, markAuthenticated,
+  }
 })
