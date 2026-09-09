@@ -36,10 +36,17 @@ if exist "%PRESET_DIR%\conanrun.bat" (
     echo [Warning] conanrun.bat not found in build directory.
 )
 
+REM cmd's `if exist` mishandles the forward slashes used by paths.env values
+REM (SERVER_BUILD_SUBDIR=apps/server): the exe exists yet the check reports
+REM "not found" (M-4, browser-e2e 2026-09-08). Normalize to backslashes first
+REM (same fix build.bat applies for its copy commands).
 set "EXE_PATH=%PRESET_DIR%\%SERVER_BUILD_SUBDIR%\%BUILD_TYPE%\%SERVER_BINARY_NAME%.exe"
+set "EXE_PATH=%EXE_PATH:/=\%"
+set "EXE_RUN_DIR=%PRESET_DIR%\%SERVER_BUILD_SUBDIR%\%BUILD_TYPE%"
+set "EXE_RUN_DIR=%EXE_RUN_DIR:/=\%"
 if exist "%EXE_PATH%" (
     echo Starting %SERVER_BINARY_NAME% (%BUILD_TYPE%)
-    cd /d "%PRESET_DIR%\%SERVER_BUILD_SUBDIR%\%BUILD_TYPE%"
+    cd /d "%EXE_RUN_DIR%"
     %SERVER_BINARY_NAME%.exe
 ) else (
     echo [Error] %SERVER_BINARY_NAME%.exe not found at %EXE_PATH%.
