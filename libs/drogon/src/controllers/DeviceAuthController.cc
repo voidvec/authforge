@@ -387,8 +387,16 @@ void DeviceAuthController::approveDevice(
       userCode,
       dbClient,
       [sharedCb, userCode, req, userId, dbClient](
+        bool dbOk,
         std::shared_ptr<::drogon_model::fulla_db::Oauth2DeviceCodes> code
       ) {
+          if (!dbOk)
+          {
+              respondError(
+                req, sharedCb, "DB_CONNECTION_ERROR", "approveDevice: device code lookup failed"
+              );
+              return;
+          }
           if (!code)
           {
               respondError(
@@ -428,10 +436,12 @@ void DeviceAuthController::approveDevice(
             [sharedCb, userCode, req](bool success) {
                 if (!success)
                 {
+                    // markApproved reports false only for DB failures (find or
+                    // update chain); the user_code itself was already validated.
                     respondError(
                       req,
                       sharedCb,
-                      "VALIDATION_DEVICE_CODE_INVALID",
+                      "DB_CONNECTION_ERROR",
                       "approveDevice: failed to approve device code"
                     );
                     return;
