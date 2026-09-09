@@ -34,6 +34,135 @@ std::string generateUsername()
     });
     return "user_" + hex.substr(0, 8);
 }
+
+// PR #180 review M1: one registration insert attempt. A plain function (not
+// a std::function stored in a shared_ptr) makes the retry a plain recursive
+// call — no self-referential shared_ptr exists, so there is no capture
+// cycle to reason about, and every capture below is a strong, hop-surviving
+// copy that releases when the chain terminates.
+void attemptRegistrationInsert(
+  const std::string &salt,
+  const std::string &passwordHash,
+  const std::string &email,
+  bool generatedUsername,
+  const std::shared_ptr<std::string> &currentUser,
+  const std::shared_ptr<int> &attempts,
+  const std::shared_ptr<std::function<void(const std::string &errorCode)>> &sharedCb
+)
+{
+    drogon_model::fulla_db::Users newUser;
+    // CHECK constraint forbids the empty string; generated names and
+    // user-typed names are both non-empty here.
+    newUser.setUsername(*currentUser);
+    newUser.setPasswordHash(passwordHash);
+    newUser.setSalt(salt);
+    if (!email.empty())
+        newUser.setEmail(fulla::common::utils::normalizeEmail(email));
+
+    try
+    {
+        auto db = app().getDbClient();
+        // Start Transaction? For now, just chain.
+
+        auto mapper = Mapper<drogon_model::fulla_db::Users>(db);
+
+        // Async Insert
+        mapper.insert(
+          newUser,
+          [sharedCb, db](const drogon_model::fulla_db::Users &u) {
+              // Assign Default Role "user"
+              try
+              {
+                  auto roleMapper = Mapper<drogon_model::fulla_db::Roles>(db);
+                  roleMapper.findOne(
+                    Criteria(
+                      drogon_model::fulla_db::Roles::Cols::_name, CompareOperator::EQ, "user"
+                    ),
+                    [sharedCb,
+                     db,
+                     userId = u.getValueOfId()](const drogon_model::fulla_db::Roles &role) {
+                        try
+                        {
+                            auto urMapper = Mapper<drogon_model::fulla_db::UserRoles>(db);
+                            drogon_model::fulla_db::UserRoles ur;
+                            ur.setUserId(userId);
+                            ur.setRoleId(role.getValueOfId());
+
+                            urMapper.insert(
+                              ur,
+                              [sharedCb](const drogon_model::fulla_db::UserRoles &) {
+                                  (*sharedCb)("");  // Success
+                              },
+                              [sharedCb](const DrogonDbException &e) {
+                                  // Recoverable: the user has already been
+                                  // created; role assignment is a side effect.
+                                  // WARN is correct (not ERROR) because the
+                                  // registration itself succeeds.
+                                  LOG_WARN << "Assign Role Failed: " << e.base().what();
+                                  (*sharedCb)("");  // Treat as success
+                                                    // for now (User
+                                                    // created), but log
+                                                    // warning
+                              }
+                            );
+                        }
+                        catch (...)
+                        {
+                            (*sharedCb)("");
+                        }
+                    },
+                    [sharedCb](const DrogonDbException &e) {
+                        // Recoverable: user created without a role.
+                        LOG_WARN << "Default Role 'user' not found: " << e.base().what();
+                        (*sharedCb)("");  // User created w/o role
+                    }
+                  );
+              }
+              catch (...)
+              {
+                  (*sharedCb)("");
+              }
+          },
+          [sharedCb, salt, passwordHash, email, generatedUsername, currentUser, attempts](
+            const DrogonDbException &e) {
+              const std::string what = e.base().what();
+              LOG_ERROR << "Register Failed: " << what;
+              // Map the failing DB constraint to a structured Error_Code so the
+              // controller can forward it verbatim. Username conflict is checked
+              // before email so a simultaneous conflict reports username first.
+              if (what.find("users_username_key") != std::string::npos)
+              {
+                  // A GENERATED name can collide with an existing one; retry
+                  // with a fresh name instead of surfacing "username taken"
+                  // to a user who never typed a username.
+                  if (generatedUsername && ++(*attempts) < 3)
+                  {
+                      *currentUser = generateUsername();
+                      attemptRegistrationInsert(
+                        salt, passwordHash, email, generatedUsername, currentUser, attempts, sharedCb
+                      );
+                      return;
+                  }
+                  (*sharedCb)("VALIDATION_USERNAME_TAKEN");
+              }
+              else if (what.find("idx_users_email_unique") != std::string::npos)
+                  (*sharedCb)("VALIDATION_EMAIL_TAKEN");
+              else
+                  (*sharedCb)("VALIDATION_INVALID_INPUT");  // unrecognized constraint
+          }
+        );
+    }
+    catch (const std::exception &e)
+    {
+        LOG_ERROR << "Register Init Failed: " << e.what();
+        (*sharedCb)("INTERNAL_ERROR");
+    }
+    catch (...)
+    {
+        LOG_ERROR << "Register Init Unknown Exception";
+        (*sharedCb)("INTERNAL_ERROR");
+    }
+}
 }  // namespace
 
 void AuthService::validateUser(
@@ -229,122 +358,7 @@ void AuthService::registerUser(
       generatedUsername ? generateUsername() : username
     );
     auto attempts = std::make_shared<int>(0);
-    auto attemptCreate = std::make_shared<std::function<void()>>();
-
-    *attemptCreate = [sharedCb, salt, passwordHash, email, generatedUsername, currentUser,
-                      attempts, attemptCreate]() {
-        drogon_model::fulla_db::Users newUser;
-        // CHECK constraint forbids the empty string; generated names and
-        // user-typed names are both non-empty here.
-        newUser.setUsername(*currentUser);
-        newUser.setPasswordHash(passwordHash);
-        newUser.setSalt(salt);
-        if (!email.empty())
-            newUser.setEmail(fulla::common::utils::normalizeEmail(email));
-
-        try
-        {
-            auto db = app().getDbClient();
-            // Start Transaction? For now, just chain.
-
-            auto mapper = Mapper<drogon_model::fulla_db::Users>(db);
-
-            // Async Insert
-            mapper.insert(
-              newUser,
-              [sharedCb, db](const drogon_model::fulla_db::Users &u) {
-              // Assign Default Role "user"
-              try
-              {
-                  auto roleMapper = Mapper<drogon_model::fulla_db::Roles>(db);
-                  roleMapper.findOne(
-                    Criteria(
-                      drogon_model::fulla_db::Roles::Cols::_name, CompareOperator::EQ, "user"
-                    ),
-                    [sharedCb,
-                     db,
-                     userId = u.getValueOfId()](const drogon_model::fulla_db::Roles &role) {
-                        try
-                        {
-                            auto urMapper = Mapper<drogon_model::fulla_db::UserRoles>(db);
-                            drogon_model::fulla_db::UserRoles ur;
-                            ur.setUserId(userId);
-                            ur.setRoleId(role.getValueOfId());
-
-                            urMapper.insert(
-                              ur,
-                              [sharedCb](const drogon_model::fulla_db::UserRoles &) {
-                                  (*sharedCb)("");  // Success
-                              },
-                              [sharedCb](const DrogonDbException &e) {
-                                  // Recoverable: the user has already been
-                                  // created; role assignment is a side effect.
-                                  // WARN is correct (not ERROR) because the
-                                  // registration itself succeeds.
-                                  LOG_WARN << "Assign Role Failed: " << e.base().what();
-                                  (*sharedCb)("");  // Treat as success
-                                                    // for now (User
-                                                    // created), but log
-                                                    // warning
-                              }
-                            );
-                        }
-                        catch (...)
-                        {
-                            (*sharedCb)("");
-                        }
-                    },
-                    [sharedCb](const DrogonDbException &e) {
-                        // Recoverable: user created without a role.
-                        LOG_WARN << "Default Role 'user' not found: " << e.base().what();
-                        (*sharedCb)("");  // User created w/o role
-                    }
-                  );
-              }
-              catch (...)
-              {
-                  (*sharedCb)("");
-              }
-          },
-          [sharedCb, generatedUsername, currentUser, attempts, attemptCreate](const DrogonDbException &e) {
-              const std::string what = e.base().what();
-              LOG_ERROR << "Register Failed: " << what;
-              // Map the failing DB constraint to a structured Error_Code so the
-              // controller can forward it verbatim. Username conflict is checked
-              // before email so a simultaneous conflict reports username first.
-              if (what.find("users_username_key") != std::string::npos)
-              {
-                  // A GENERATED name can collide with an existing one; retry
-                  // with a fresh name instead of surfacing "username taken"
-                  // to a user who never typed a username.
-                  if (generatedUsername && ++(*attempts) < 3)
-                  {
-                      *currentUser = generateUsername();
-                      (*attemptCreate)();
-                      return;
-                  }
-                  (*sharedCb)("VALIDATION_USERNAME_TAKEN");
-              }
-              else if (what.find("idx_users_email_unique") != std::string::npos)
-                  (*sharedCb)("VALIDATION_EMAIL_TAKEN");
-              else
-                  (*sharedCb)("VALIDATION_INVALID_INPUT");  // unrecognized constraint
-          }
-        );
-    }
-    catch (const std::exception &e)
-    {
-        LOG_ERROR << "Register Init Failed: " << e.what();
-        (*sharedCb)("INTERNAL_ERROR");
-    }
-    catch (...)
-    {
-        LOG_ERROR << "Register Init Unknown Exception";
-        (*sharedCb)("INTERNAL_ERROR");
-    }
-    };
-
-    (*attemptCreate)();
+    attemptRegistrationInsert(salt, passwordHash, email, generatedUsername, currentUser, attempts, sharedCb);
 }
 
 void AuthService::getUserInfo(

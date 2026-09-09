@@ -47,12 +47,15 @@ class DeviceCodeService
 
     /// Mark a device code as consumed (status = 'approved', set user_id).
     /// Replaces: UPDATE oauth2_device_codes SET status = 'approved', user_id = $1
-    /// callback(false) covers any DB failure along the find/update chain.
+    /// callback(dbOk, found): dbOk=false -> DB failure along the find/update
+    /// chain (logged); found=false -> the device_code_hash row disappeared
+    /// between lookup and update (reclaimed/expired-cleanup); both true ->
+    /// approved.
     static void markApproved(
       const std::string &deviceCodeHash,
       const std::string &userId,
       ::drogon::orm::DbClientPtr db,
-      std::function<void(bool)> &&callback
+      std::function<void(bool, bool)> &&callback
     );
 
     /// Find a device code by its user_code.

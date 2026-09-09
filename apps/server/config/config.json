@@ -35,7 +35,7 @@
             "db": 0,
             "is_fast": false,
             "number_of_connections": 10,
-            "timeout": -1.0
+            "timeout": 2.0
         }
     ],
     "app": {
@@ -162,11 +162,18 @@
                         "client_type": "PUBLIC",
                         "secret": "123456",
                         "redirect_uri": "http://127.0.0.1:5173/callback,http://localhost:5173/callback,http://127.0.0.1:8080/callback,http://localhost:8080/callback",
-                        "allowed_scopes": ["openid", "profile", "email"]
+                        "allowed_scopes": [
+                            "openid",
+                            "profile",
+                            "email"
+                        ]
                     }
                 },
                 "admin_users": {
-                    "admin": ["admin", "user"]
+                    "admin": [
+                        "admin",
+                        "user"
+                    ]
                 },
                 "tokens": {
                     "auth_code_ttl": 600,
@@ -219,12 +226,14 @@
             "url": "http://localhost:5173",
             "register_path": "/register"
         },
-    "webauthn": {
-        "rp_id": "localhost",
-        "rp_name": "OAuth2 Server",
-        "rp_origins": ["http://localhost:5173"]
-    },
-    "external_auth": {
+        "webauthn": {
+            "rp_id": "localhost",
+            "rp_name": "OAuth2 Server",
+            "rp_origins": [
+                "http://localhost:5173"
+            ]
+        },
+        "external_auth": {
             "github": {
                 "client_id": "",
                 "client_secret": ""
