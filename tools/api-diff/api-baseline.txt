@@ -3094,7 +3094,7 @@ static void markApproved(
 const std::string &deviceCodeHash,
 const std::string &userId,
 ::drogon::orm::DbClientPtr db,
-std::function<void(bool)> &&callback
+std::function<void(bool, bool)> &&callback
 );
 static void findByUserCode(
 const std::string &userCode,
