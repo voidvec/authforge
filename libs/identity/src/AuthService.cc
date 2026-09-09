@@ -60,6 +60,17 @@ bool isLegacyHash(const std::string &storedHash)
     return storedHash.find("$pbkdf2-sha256$") != 0;
 }
 
+// U-2 (browser-e2e 2026-09-08): generated username for email-first
+// registrations that leave the username blank ("user_<8 lowercase hex>",
+// charset-safe for Rule.h USERNAME_PATTERN). Uniqueness is enforced by the
+// users table; the registerUser retry loop covers the rare collision.
+std::string generateUsername(fulla::common::ports::ICryptoProvider &crypto)
+{
+    unsigned char raw[4];
+    crypto.secureRandomBytes(raw, sizeof(raw));
+    return "user_" + bytesToHex(raw, sizeof(raw));
+}
+
 std::string hashPassword(
   const std::string &password,
   fulla::common::ports::ICryptoProvider &crypto
@@ -284,15 +295,42 @@ void AuthService::registerUser(
         return;
     }
 
-    UserData newUser;
-    newUser.username = username;
-    newUser.passwordHash = passwordHash;
-    newUser.salt = "";  // PBKDF2 embeds its own salt in the hash string
-    newUser.email = email;
+    // Value-capture the dependencies: async callbacks must not capture
+    // `this` (db-operations rule 4 -- do not rely on the instance's
+    // process-lifetime binding).
+    auto sharedCb =
+      std::make_shared<std::function<void(const std::string &errorCode)>>(std::move(callback));
+    auto crypto = crypto_;
+    auto userRepo = userRepo_;
 
-    userRepo_->create(
-      newUser,
-      [callback = std::move(callback)](std::optional<int32_t> newUserId, std::string errorCode) {
+    // U-2: deliver the registration form's "leave the username blank and one
+    // is generated" promise. Storing NULL instead made every empty-username
+    // account read username "" in the account center (Drogon maps a NULL
+    // column to ""), which defeated the Danger Zone confirm guard.
+    const bool generatedUsername = username.empty();
+    auto currentUser = std::make_shared<std::string>();
+    try
+    {
+        *currentUser = generatedUsername ? generateUsername(*crypto) : username;
+    }
+    catch (const std::exception &)
+    {
+        (*sharedCb)("INTERNAL_ERROR");
+        return;
+    }
+    auto attempts = std::make_shared<int>(0);
+    auto attemptCreate = std::make_shared<std::function<void()>>();
+
+    *attemptCreate = [sharedCb, crypto, userRepo, passwordHash, email, generatedUsername,
+                      currentUser, attempts, attemptCreate]() {
+        UserData newUser;
+        newUser.username = *currentUser;
+        newUser.passwordHash = passwordHash;
+        newUser.salt = "";  // PBKDF2 embeds its own salt in the hash string
+        newUser.email = email;
+
+        userRepo->create(
+          newUser,
           // IUserRepository::create() is responsible for default-role
           // assignment (repository-owned concern -- mirrors
           // OAuth2Server/AuthService.cc's registerUser, which assigns the
@@ -303,14 +341,37 @@ void AuthService::registerUser(
           // VALIDATION_USERNAME_TAKEN/VALIDATION_EMAIL_TAKEN) -- forward
           // verbatim, falling back to INTERNAL_ERROR only if the
           // repository didn't classify the failure.
-          if (newUserId)
-          {
-              callback("");
-              return;
+          [sharedCb, crypto, generatedUsername, currentUser, attempts, attemptCreate](
+            std::optional<int32_t> newUserId, std::string errorCode) {
+              if (newUserId)
+              {
+                  (*sharedCb)("");
+                  return;
+              }
+              // A GENERATED name can collide with an existing one; retry
+              // with a fresh name instead of surfacing "username taken" to
+              // a user who never typed a username.
+              if (errorCode == "VALIDATION_USERNAME_TAKEN" && generatedUsername &&
+                  ++(*attempts) < 3)
+              {
+                  try
+                  {
+                      *currentUser = generateUsername(*crypto);
+                  }
+                  catch (const std::exception &)
+                  {
+                      (*sharedCb)("INTERNAL_ERROR");
+                      return;
+                  }
+                  (*attemptCreate)();
+                  return;
+              }
+              (*sharedCb)(errorCode.empty() ? "INTERNAL_ERROR" : errorCode);
           }
-          callback(errorCode.empty() ? "INTERNAL_ERROR" : errorCode);
-      }
-    );
+        );
+    };
+
+    (*attemptCreate)();
 }
 
 void AuthService::getUserInfo(
