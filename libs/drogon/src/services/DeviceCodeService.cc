@@ -112,12 +112,12 @@ void DeviceCodeService::markApproved(
   const std::string &deviceCodeHash,
   const std::string &userId,
   ::drogon::orm::DbClientPtr db,
-  std::function<void(bool)> &&callback
+  std::function<void(bool, bool)> &&callback
 )
 {
-    // Same shared-callback discipline as findByUserCode: the callback is moved
-    // once; every lambda below captures the shared_ptr by value.
-    auto sharedCb = std::make_shared<std::function<void(bool)>>(std::move(callback));
+    // Same shared-callback discipline as findByUserCode: the callback is
+    // moved once; every lambda below captures the shared_ptr by value.
+    auto sharedCb = std::make_shared<std::function<void(bool, bool)>>(std::move(callback));
 
     try
     {
@@ -135,40 +135,48 @@ void DeviceCodeService::markApproved(
               {
                   Mapper<Oauth2DeviceCodes>(db).update(
                     updated,
-                    [sharedCb](const size_t) { (*sharedCb)(true); },
+                    [sharedCb](const size_t) { (*sharedCb)(true, true); },
                     [sharedCb](const DrogonDbException &e) {
                         LOG_ERROR << "DeviceCodeService::markApproved update failed: "
                                   << e.base().what();
-                        (*sharedCb)(false);
+                        (*sharedCb)(false, true);
                     }
                   );
               }
               catch (const std::exception &e)
               {
                   LOG_ERROR << "DeviceCodeService::markApproved update Exception: " << e.what();
-                  (*sharedCb)(false);
+                  (*sharedCb)(false, true);
               }
               catch (...)
               {
                   LOG_ERROR << "DeviceCodeService::markApproved update Unknown Exception";
-                  (*sharedCb)(false);
+                  (*sharedCb)(false, true);
               }
           },
           [sharedCb](const DrogonDbException &e) {
+              // Same distinction as findByUserCode (PR #180 review M4): the
+              // row vanishing between the caller's lookup and this update is
+              // a protocol-level miss, not an infrastructure fault.
+              if (dynamic_cast<const UnexpectedRows *>(&e) != nullptr)
+              {
+                  (*sharedCb)(true, false);
+                  return;
+              }
               LOG_ERROR << "DeviceCodeService::markApproved find failed: " << e.base().what();
-              (*sharedCb)(false);
+              (*sharedCb)(false, false);
           }
         );
     }
     catch (const std::exception &e)
     {
         LOG_ERROR << "DeviceCodeService::markApproved Exception: " << e.what();
-        (*sharedCb)(false);
+        (*sharedCb)(false, false);
     }
     catch (...)
     {
         LOG_ERROR << "DeviceCodeService::markApproved Unknown Exception";
-        (*sharedCb)(false);
+        (*sharedCb)(false, false);
     }
 }
 

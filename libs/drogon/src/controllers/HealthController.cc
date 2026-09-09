@@ -109,31 +109,43 @@ void HealthController::healthReady(
           "SELECT 1",
           [sharedCb](const ::drogon::orm::Result &) {
               // DB OK - check Redis
+              //
+              // Drogon's Redis client with no ready connection queues the
+              // PING (both callbacks attached) in an internal buffer and,
+              // on connect failure, only schedules a reconnect — the
+              // queued callbacks are never invoked. Guard readiness with
+              // a one-shot timeout so the endpoint always answers; first
+              // answer wins (CAS) and cancels the pending timer so a fast
+              // answer does not pin the response callback for the full
+              // budget (PR #180 review M5). Every branch — including the
+              // not-configured catch below — answers through the same
+              // guard, so the single-answer invariant is structural.
+              auto loop = ::drogon::app().getLoop();
+              auto responded = std::make_shared<std::atomic<bool>>(false);
+              auto timerId = std::make_shared<::trantor::TimerId>();
+              auto answer =
+                [sharedCb, responded, loop, timerId](bool redisOk, const char *redisState) {
+                    bool expected = false;
+                    if (!responded->compare_exchange_strong(expected, true))
+                        return;
+                    // invalidateTimer must run on the loop that owns the
+                    // timer; the redis callbacks may fire on another IO
+                    // thread. Cancelling an already-fired timer is a no-op.
+                    loop->runInLoop([loop, timerId]() {
+                        loop->invalidateTimer(*timerId);
+                    });
+                    Json::Value json;
+                    json["status"] = redisOk ? "ok" : "degraded";
+                    json["database"] = "connected";
+                    json["redis"] = redisState;
+                    auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
+                    if (!redisOk)
+                        resp->setStatusCode(::drogon::k503ServiceUnavailable);
+                    (*sharedCb)(resp);
+                };
               try
               {
                   auto redis = ::drogon::app().getRedisClient("default");
-                  // Drogon's Redis client with no ready connection queues the
-                  // PING (both callbacks attached) in an internal buffer and,
-                  // on connect failure, only schedules a reconnect — the
-                  // queued callbacks are never invoked. Guard readiness with
-                  // a one-shot timeout so the endpoint always answers; first
-                  // answer wins, the losers no-op (health-status body contract
-                  // identical to the disconnected branch).
-                  auto responded = std::make_shared<std::atomic<bool>>(false);
-                  auto answer =
-                    [sharedCb, responded](bool redisOk, const char *redisState) {
-                        bool expected = false;
-                        if (!responded->compare_exchange_strong(expected, true))
-                            return;
-                        Json::Value json;
-                        json["status"] = redisOk ? "ok" : "degraded";
-                        json["database"] = "connected";
-                        json["redis"] = redisState;
-                        auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
-                        if (!redisOk)
-                            resp->setStatusCode(::drogon::k503ServiceUnavailable);
-                        (*sharedCb)(resp);
-                    };
                   redis->execCommandAsync(
                     [answer](const ::drogon::nosql::RedisResult &) {
                         answer(true, "connected");
@@ -143,7 +155,7 @@ void HealthController::healthReady(
                     },
                     "PING"
                   );
-                  ::drogon::app().getLoop()->runAfter(
+                  *timerId = loop->runAfter(
                     2.0,
                     [answer]() { answer(false, "timeout"); }
                   );
@@ -151,11 +163,7 @@ void HealthController::healthReady(
               catch (...)
               {
                   // Redis not configured - that's OK for some deployments
-                  Json::Value json;
-                  json["status"] = "ok";
-                  json["database"] = "connected";
-                  json["redis"] = "not_configured";
-                  (*sharedCb)(::drogon::HttpResponse::newHttpJsonResponse(json));
+                  answer(true, "not_configured");
               }
           },
           [sharedCb](const ::drogon::orm::DrogonDbException &e) {

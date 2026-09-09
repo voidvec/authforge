@@ -261,4 +261,13 @@ DROGON_TEST(Integration_P0_DeviceAuth_ApprovePendingCode_ThenDeviceRedeemsToken)
     REQUIRE(parseJsonBody(tokenResp, tokenBody));
     CHECK(tokenBody.isMember("access_token"));
     CHECK(tokenBody.isMember("refresh_token"));
+
+    // Teardown (PR #180 review M8): remove the seeded row so row-count
+    // sensitive assertions elsewhere see no residue. The redeemed tokens
+    // stay, consistent with the other device-code tests (the shared
+    // p1-test-pub-device client must also survive — DeviceCodeRaceCondition
+    // tests reuse it via their own idempotent ensure()).
+    CHECK(approveExecSql(
+      "DELETE FROM oauth2_device_codes WHERE user_code = '" + userCode + "'"
+    ));
 }

@@ -1,5 +1,6 @@
 #include <fulla/identity/AuthService.h>
 #include <fulla/identity/IUserRepository.h>
+#include <fulla/common/utils/EmailNormalizer.h>
 
 #include <algorithm>
 #include <sstream>
@@ -55,6 +56,76 @@ std::vector<unsigned char> hexToBytes(const std::string &hex)
     return bytes;
 }
 
+// PR #180 review M1: one registration insert attempt. A plain function (not
+// a std::function stored in a shared_ptr) makes the retry a plain recursive
+// call — no self-referential shared_ptr exists, so there is no capture
+// cycle to reason about, and every capture below is a strong, hop-surviving
+// copy that releases when the chain terminates.
+std::string generateUsername(fulla::common::ports::ICryptoProvider &crypto);
+
+void attemptRegistrationInsert(
+  const std::shared_ptr<IUserRepository> &userRepo,
+  const std::shared_ptr<fulla::common::ports::ICryptoProvider> &crypto,
+  const std::string &passwordHash,
+  const std::string &email,
+  bool generatedUsername,
+  const std::shared_ptr<std::string> &currentUser,
+  const std::shared_ptr<int> &attempts,
+  const std::shared_ptr<std::function<void(const std::string &errorCode)>> &sharedCb
+)
+{
+    UserData newUser;
+    newUser.username = *currentUser;
+    newUser.passwordHash = passwordHash;
+    newUser.salt = "";  // PBKDF2 embeds its own salt in the hash string
+    // Canonical form, mirroring the legacy path: storage, the unique index,
+    // and the (normalized) login lookup must agree. (PR #180 review M7.)
+    newUser.email = email.empty() ? std::string() : fulla::common::utils::normalizeEmail(email);
+
+    userRepo->create(
+      newUser,
+      // IUserRepository::create() is responsible for default-role
+      // assignment (repository-owned concern -- mirrors
+      // OAuth2Server/AuthService.cc's registerUser, which assigns the
+      // "user" role as part of the same transaction/continuation
+      // chain rather than as a separate caller-driven step). It is
+      // also responsible for classifying constraint-violation
+      // failures into structured Error_Codes (e.g.
+      // VALIDATION_USERNAME_TAKEN/VALIDATION_EMAIL_TAKEN) -- forward
+      // verbatim, falling back to INTERNAL_ERROR only if the
+      // repository didn't classify the failure.
+      [=](std::optional<int32_t> newUserId, std::string errorCode) {
+          if (newUserId)
+          {
+              (*sharedCb)("");
+              return;
+          }
+          // A GENERATED name can collide with an existing one; retry
+          // with a fresh name instead of surfacing "username taken" to
+          // a user who never typed a username.
+          if (errorCode == "VALIDATION_USERNAME_TAKEN" && generatedUsername &&
+              ++(*attempts) < 3)
+          {
+              try
+              {
+                  *currentUser = generateUsername(*crypto);
+              }
+              catch (const std::exception &)
+              {
+                  (*sharedCb)("INTERNAL_ERROR");
+                  return;
+              }
+              attemptRegistrationInsert(
+                userRepo, crypto, passwordHash, email, generatedUsername, currentUser, attempts,
+                sharedCb
+              );
+              return;
+          }
+          (*sharedCb)(errorCode.empty() ? "INTERNAL_ERROR" : errorCode);
+      }
+    );
+}
+
 bool isLegacyHash(const std::string &storedHash)
 {
     return storedHash.find("$pbkdf2-sha256$") != 0;
@@ -64,10 +135,17 @@ bool isLegacyHash(const std::string &storedHash)
 // registrations that leave the username blank ("user_<8 lowercase hex>",
 // charset-safe for Rule.h USERNAME_PATTERN). Uniqueness is enforced by the
 // users table; the registerUser retry loop covers the rare collision.
+// PR #180 review M2: secureRandomBytes leaves the buffer untouched on
+// failure (the contract TotpUtils.cc documents for its PR #157 review
+// finding), so the return value MUST be checked — an unchecked read draws
+// from uninitialized stack. Fail closed: registration surfaces
+// INTERNAL_ERROR rather than creating an account on a broken RNG. (The
+// legacy path is fail-closed too, via its fresh-UUID fallback.)
 std::string generateUsername(fulla::common::ports::ICryptoProvider &crypto)
 {
     unsigned char raw[4];
-    crypto.secureRandomBytes(raw, sizeof(raw));
+    if (!crypto.secureRandomBytes(raw, sizeof(raw)))
+        throw std::runtime_error("secureRandomBytes failed");
     return "user_" + bytesToHex(raw, sizeof(raw));
 }
 
@@ -186,10 +264,13 @@ void AuthService::validateUser(
     auto userRepo = userRepo_;
 
     // Login-identifier routing: contains '@' -> email lookup, else username.
-    // (Callers are expected to have normalized the email already, matching
-    // OAuth2Server/AuthService.cc's contract -- this service does not own
-    // email-normalization policy, which is deployment-specific.)
+    // Email identifiers are canonicalized before lookup (mirroring the
+    // legacy AuthService): registration stores the canonical form, so a
+    // mixed-case login input must not miss the row. Usernames stay
+    // case-sensitive by design. (PR #180 review M7.)
     bool isEmail = identifier.find('@') != std::string::npos;
+    const std::string lookupKey =
+      isEmail ? fulla::common::utils::normalizeEmail(identifier) : identifier;
 
     // Value-capture the policy flag: async callbacks must not capture
     // `this` (db-operations rule 4 -- do not rely on the instance's
@@ -266,7 +347,7 @@ void AuthService::validateUser(
     };
 
     if (isEmail)
-        userRepo_->findByEmail(identifier, std::move(onFound));
+        userRepo_->findByEmail(lookupKey, std::move(onFound));
     else
         userRepo_->findByUsername(identifier, std::move(onFound));
 }
@@ -319,59 +400,7 @@ void AuthService::registerUser(
         return;
     }
     auto attempts = std::make_shared<int>(0);
-    auto attemptCreate = std::make_shared<std::function<void()>>();
-
-    *attemptCreate = [sharedCb, crypto, userRepo, passwordHash, email, generatedUsername,
-                      currentUser, attempts, attemptCreate]() {
-        UserData newUser;
-        newUser.username = *currentUser;
-        newUser.passwordHash = passwordHash;
-        newUser.salt = "";  // PBKDF2 embeds its own salt in the hash string
-        newUser.email = email;
-
-        userRepo->create(
-          newUser,
-          // IUserRepository::create() is responsible for default-role
-          // assignment (repository-owned concern -- mirrors
-          // OAuth2Server/AuthService.cc's registerUser, which assigns the
-          // "user" role as part of the same transaction/continuation
-          // chain rather than as a separate caller-driven step). It is
-          // also responsible for classifying constraint-violation
-          // failures into structured Error_Codes (e.g.
-          // VALIDATION_USERNAME_TAKEN/VALIDATION_EMAIL_TAKEN) -- forward
-          // verbatim, falling back to INTERNAL_ERROR only if the
-          // repository didn't classify the failure.
-          [sharedCb, crypto, generatedUsername, currentUser, attempts, attemptCreate](
-            std::optional<int32_t> newUserId, std::string errorCode) {
-              if (newUserId)
-              {
-                  (*sharedCb)("");
-                  return;
-              }
-              // A GENERATED name can collide with an existing one; retry
-              // with a fresh name instead of surfacing "username taken" to
-              // a user who never typed a username.
-              if (errorCode == "VALIDATION_USERNAME_TAKEN" && generatedUsername &&
-                  ++(*attempts) < 3)
-              {
-                  try
-                  {
-                      *currentUser = generateUsername(*crypto);
-                  }
-                  catch (const std::exception &)
-                  {
-                      (*sharedCb)("INTERNAL_ERROR");
-                      return;
-                  }
-                  (*attemptCreate)();
-                  return;
-              }
-              (*sharedCb)(errorCode.empty() ? "INTERNAL_ERROR" : errorCode);
-          }
-        );
-    };
-
-    (*attemptCreate)();
+    attemptRegistrationInsert(userRepo, crypto, passwordHash, email, generatedUsername, currentUser, attempts, sharedCb);
 }
 
 void AuthService::getUserInfo(

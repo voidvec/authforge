@@ -83,12 +83,14 @@ DROGON_TEST(Integration_P1_Registration_EmailOnly_GeneratesUsername)
       (resp->getStatusCode() == k200OK || resp->getStatusCode() == k201Created)
     );
 
-    // Verify stored shape: generated username + case-insensitive email match
-    // (the wired identity registration path stores the email verbatim; the
-    // legacy fallback normalizes — accept either, compare lowercased).
+    // Verify stored shape: generated username + CANONICAL email (both
+    // registration paths normalize; PR #180 review M7 restored this
+    // assertion once the identity path normalized too, and V031 backfills
+    // pre-existing rows).
+    const std::string usedEmail = fulla::common::utils::normalizeEmail(rawEmail);
     std::promise<bool> pRead;
     db->execSqlAsync(
-      "SELECT username, lower(email) AS email_lc FROM users WHERE lower(email) = lower($1)",
+      "SELECT username, email FROM users WHERE email = $1",
       [&](const Result &r) {
           bool ok = !r.empty();
           if (ok)
@@ -98,10 +100,12 @@ DROGON_TEST(Integration_P1_Registration_EmailOnly_GeneratesUsername)
               const std::regex generatedPattern("^user_[0-9a-f]{8}$");
               ok = std::regex_match(r[0]["username"].as<std::string>(), generatedPattern);
           }
+          if (ok)
+              ok = r[0]["email"].as<std::string>() == usedEmail;
           pRead.set_value(ok);
       },
       [&](const DrogonDbException &) { pRead.set_value(false); },
-      rawEmail
+      usedEmail
     );
     CHECK(pRead.get_future().get() == true);
 

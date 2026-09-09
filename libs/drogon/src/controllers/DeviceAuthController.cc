@@ -433,16 +433,27 @@ void DeviceAuthController::approveDevice(
             code->getValueOfDeviceCodeHash(),
             userId,
             dbClient,
-            [sharedCb, userCode, req](bool success) {
-                if (!success)
+            [sharedCb, userCode, req](bool dbOk, bool found) {
+                if (!dbOk)
                 {
-                    // markApproved reports false only for DB failures (find or
-                    // update chain); the user_code itself was already validated.
                     respondError(
                       req,
                       sharedCb,
                       "DB_CONNECTION_ERROR",
                       "approveDevice: failed to approve device code"
+                    );
+                    return;
+                }
+                if (!found)
+                {
+                    // The row vanished between our lookup and the update
+                    // (reclaimed by cleanup) — a protocol-level miss, not an
+                    // infrastructure fault. (PR #180 review M4.)
+                    respondError(
+                      req,
+                      sharedCb,
+                      "VALIDATION_DEVICE_CODE_INVALID",
+                      "approveDevice: user_code no longer pending"
                     );
                     return;
                 }
