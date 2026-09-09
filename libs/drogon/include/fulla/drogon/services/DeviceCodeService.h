@@ -45,16 +45,9 @@ class DeviceCodeService
       std::function<void(bool)> &&callback
     );
 
-    /// Find a device code by its hash. Returns nullptr if not found.
-    /// Replaces: SELECT ... FROM oauth2_device_codes WHERE device_code_hash = $1
-    static void findByDeviceCodeHash(
-      const std::string &deviceCodeHash,
-      ::drogon::orm::DbClientPtr db,
-      std::function<void(std::shared_ptr<::drogon_model::fulla_db::Oauth2DeviceCodes>)> &&callback
-    );
-
     /// Mark a device code as consumed (status = 'approved', set user_id).
     /// Replaces: UPDATE oauth2_device_codes SET status = 'approved', user_id = $1
+    /// callback(false) covers any DB failure along the find/update chain.
     static void markApproved(
       const std::string &deviceCodeHash,
       const std::string &userId,
@@ -62,11 +55,13 @@ class DeviceCodeService
       std::function<void(bool)> &&callback
     );
 
-    /// Find a device code by its user_code. Returns nullptr if not found.
+    /// Find a device code by its user_code.
+    /// callback(ok, row): ok=true + row -> found; ok=true + nullptr -> no such
+    /// user_code (0 rows / ambiguous rows); ok=false -> DB failure (logged).
     static void findByUserCode(
       const std::string &userCode,
       ::drogon::orm::DbClientPtr db,
-      std::function<void(std::shared_ptr<::drogon_model::fulla_db::Oauth2DeviceCodes>)> &&callback
+      std::function<void(bool, std::shared_ptr<::drogon_model::fulla_db::Oauth2DeviceCodes>)> &&callback
     );
 };
 
