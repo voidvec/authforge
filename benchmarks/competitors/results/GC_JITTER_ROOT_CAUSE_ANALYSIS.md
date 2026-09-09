@@ -99,7 +99,7 @@ bash run-gc-jitter.sh \
 
 ### 4.2 WSL2 配置调优
 
-`C:\Users\vilas\.wslconfig` 新增：
+`%USERPROFILE%\.wslconfig` 新增：
 
 ```ini
 autoMemoryReclaim=disabled  # 阻止周期性内存回收停顿
