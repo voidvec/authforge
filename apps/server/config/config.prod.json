@@ -207,9 +207,11 @@
                     }
                 },
                 "clients": {
+                    // PUBLIC client authenticates with authorization code + PKCE and carries no
+                    // secret; ConfigManager's production non-default-secret check skips PUBLIC
+                    // clients for exactly this reason.
                     "vue-client": {
                         "client_type": "PUBLIC",
-                        "secret": "123456",
                         "redirect_uri": "http://127.0.0.1:5173/callback,http://127.0.0.1:8080/callback",
                         "allowed_scopes": ["openid", "profile", "email"]
                     }
