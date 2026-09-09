@@ -175,6 +175,33 @@ DROGON_TEST(Unit_P0_ConfigManager_EnvOverride_VueRedirect_ByNameLookup)
     unsetenv("FULLA_VUE_REDIRECT_URI");
 }
 
+// Companion to the redirect_uri case above: FULLA_VUE_CLIENT_SECRET must land on
+// the same plugin client entry. Regression guard for the override having been
+// declared against a non-existent top-level "vue_client.secret" path, which made
+// ConfigManager::applyEnvOverrides a silent no-op.
+DROGON_TEST(Unit_P0_ConfigManager_EnvOverride_VueClientSecret_ByNameLookup)
+{
+    setenv("FULLA_VUE_CLIENT_SECRET", "prod-strong-vue-secret", 1);
+
+    std::string configPath = "./config.json";
+    if (!std::filesystem::exists(configPath))
+        configPath = "../config.json";
+    if (!std::filesystem::exists(configPath))
+        configPath = "../../config.json";
+    if (!std::filesystem::exists(configPath))
+        configPath = "../../../config.json";
+
+    Json::Value config;
+    CHECK(fulla::common::config::ConfigManager::load(configPath, config) == true);
+
+    auto secret = fulla::common::config::ConfigManager::get<std::string>(
+      config, "plugins[name=OAuth2Plugin].config.clients.vue-client.secret"
+    );
+    CHECK(secret == "prod-strong-vue-secret");
+
+    unsetenv("FULLA_VUE_CLIENT_SECRET");
+}
+
 
 // ============================================================================
 // #102: production-mode signing-key and weak-secret gates
