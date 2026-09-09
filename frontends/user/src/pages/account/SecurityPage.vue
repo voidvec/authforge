@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import http from '../../services/http'
 import { userService } from '../../services/userService'
@@ -19,6 +20,7 @@ import QrcodeVue from 'qrcode.vue'
 
 const { t } = useI18n()
 const auth = useAuthStore()
+const router = useRouter()
 const loading = ref(true)
 const profile = ref<any>(null)
 const success = ref('')
@@ -126,10 +128,12 @@ async function changePassword() {
     // change (response note: "All existing sessions have been revoked").
     // Drop the local session and land on /login with a notice — keeping the
     // stale token left the SPA in a zombie state (guest guard bounced the
-    // user off /login into a broken dashboard full of 401s).
+    // user off /login into a broken dashboard full of 401s). SPA navigation
+    // rather than a full page load (PR #180 review M9): logoutLocal() has
+    // already cleared the state, and router keeps the base prefix.
     auth.logoutLocal()
     oldPassword.value = ''; newPassword.value = ''; confirmNewPassword.value = ''
-    window.location.href = '/login?pw_changed=1'
+    await router.replace({ path: '/login', query: { pw_changed: '1' } })
   } catch (e: unknown) {
     showError(normalizeError(e))
   } finally { changingPassword.value = false }
