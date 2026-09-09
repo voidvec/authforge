@@ -36,10 +36,12 @@ inline const std::vector<EnvOverride> FULLA_ENV_OVERRIDES =
    {"custom_config.external_auth.wechat.appid", "FULLA_WECHAT_APPID", false},
    {"custom_config.external_auth.wechat.secret", "FULLA_WECHAT_SECRET", false},
    {"listeners.0.port", "FULLA_LISTEN_PORT", true},
-   {"vue_client.secret", "FULLA_VUE_CLIENT_SECRET", false},
    // "[name=OAuth2Plugin]" resolves the plugin by its drogon "name" field,
    // independent of array ordering — each config file inserts a different set
    // of plugins (Hodor, AccessLogger) so a numeric index would be fragile.
+   {"plugins[name=OAuth2Plugin].config.clients.vue-client.secret",
+    "FULLA_VUE_CLIENT_SECRET",
+    false},
    {"plugins[name=OAuth2Plugin].config.clients.vue-client.redirect_uri",
     "FULLA_VUE_REDIRECT_URI",
     false},
