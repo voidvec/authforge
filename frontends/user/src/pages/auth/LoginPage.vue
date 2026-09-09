@@ -45,6 +45,48 @@ if (route.query.must_change_password === '1') {
   showPasswordChange.value = true
 }
 
+// U-1: the security page redirects here with pw_changed=1 after a successful
+// self-service password change (the server revoked every session; a fresh
+// login is required).
+const passwordChangedNotice = route.query.pw_changed === '1'
+
+// U-3 (browser-e2e 2026-09-08): /oauth2/authorize redirects anonymous users
+// to /login with the OAuth parameters FLATTENED onto the query (client_id,
+// redirect_uri, state, ... — there is no `redirect` param). After a successful
+// login the authorization flow must RESUME: rebuild the authorize URL from
+// those parameters (whitelisted keys only, values passed through verbatim —
+// the server re-validates redirect_uri against the client registration) and
+// navigate with a full page load. Before this, such users landed on the
+// dashboard and the relying party never received its authorization code.
+const AUTHORIZE_CARRY_KEYS = [
+  'client_id', 'redirect_uri', 'scope', 'state', 'response_type',
+  'code_challenge', 'code_challenge_method', 'nonce',
+] as const
+
+function resumeAuthorizeFlow(): boolean {
+  const q = route.query
+  const clientId = typeof q.client_id === 'string' ? q.client_id : ''
+  const responseType = typeof q.response_type === 'string' ? q.response_type : ''
+  if (!clientId || !responseType) return false
+  const params = new URLSearchParams()
+  for (const key of AUTHORIZE_CARRY_KEYS) {
+    const v = q[key]
+    if (typeof v === 'string' && v !== '') params.set(key, v)
+  }
+  window.location.href = `/oauth2/authorize?${params.toString()}`
+  return true
+}
+
+function navigateAfterLogin() {
+  const redirect = route.query.redirect
+  if (typeof redirect === 'string' && redirect) {
+    router.push(redirect)
+    return
+  }
+  if (resumeAuthorizeFlow()) return
+  router.push('/')
+}
+
 async function handleLogin() {
   const result = await auth.login(username.value, password.value)
   if (result.mfaRequired) {
@@ -55,14 +97,14 @@ async function handleLogin() {
     password.value = ''
     showPasswordChange.value = true
   } else if (result.success) {
-    router.push((route.query.redirect as string) || '/')
+    navigateAfterLogin()
   }
 }
 
 async function handleMfa() {
   const result = await auth.verifyMfa(mfaToken.value, mfaCode.value)
   if (result.success) {
-    router.push((route.query.redirect as string) || '/')
+    navigateAfterLogin()
   }
 }
 
@@ -101,6 +143,15 @@ async function handlePasswordChange() {
         </router-link>
       </p>
     </div>
+
+    <AppAlert
+      v-if="passwordChangedNotice"
+      type="success"
+      class="mb-6"
+      data-testid="password-changed-notice"
+    >
+      {{ $t('auth.login.passwordChangedNotice') }}
+    </AppAlert>
 
     <AppAlert
       v-if="auth.errorText"
@@ -217,6 +268,7 @@ async function handlePasswordChange() {
           inputmode="numeric"
           maxlength="6"
           autocomplete="one-time-code"
+          :aria-label="$t('auth.login.mfa.codeLabel')"
           class="block w-full px-4 py-4 text-center text-2xl tracking-[0.42em] font-mono tabular-nums border border-neutral-300 rounded-ctl bg-surface
                  focus:outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus:border-brand-700"
           placeholder="000000"

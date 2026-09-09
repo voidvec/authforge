@@ -5,6 +5,7 @@ import http from '../../services/http'
 import { userService } from '../../services/userService'
 import { normalizeError, type NormalizedError } from '../../services/errorAdapter'
 import { getErrorMessage } from '../../services/messages'
+import { useAuthStore } from '../../stores/auth'
 import { base64UrlEncode, base64UrlDecode } from '../../utils/pkce'
 import type { SocialLink } from '../../types'
 import AppAlert from '../../components/ui/AppAlert.vue'
@@ -12,8 +13,12 @@ import AppBadge from '../../components/ui/AppBadge.vue'
 import AppCard from '../../components/ui/AppCard.vue'
 import AppModal from '../../components/ui/AppModal.vue'
 import DData from '../../components/ui/DData.vue'
+// U-5: renders the backend-provided otpauth:// URI as a scannable QR code
+// (the setup panel's copy promised a QR but only showed the manual key).
+import QrcodeVue from 'qrcode.vue'
 
 const { t } = useI18n()
+const auth = useAuthStore()
 const loading = ref(true)
 const profile = ref<any>(null)
 const success = ref('')
@@ -117,8 +122,14 @@ async function changePassword() {
   changingPassword.value = true
   try {
     await http.put('/api/me/password', { old_password: oldPassword.value, new_password: newPassword.value }, { headers: { 'Content-Type': 'application/json' } })
-    showSuccess(t('account.security.passwordChanged'))
+    // U-1: the server revoked every token for this account as part of the
+    // change (response note: "All existing sessions have been revoked").
+    // Drop the local session and land on /login with a notice — keeping the
+    // stale token left the SPA in a zombie state (guest guard bounced the
+    // user off /login into a broken dashboard full of 401s).
+    auth.logoutLocal()
     oldPassword.value = ''; newPassword.value = ''; confirmNewPassword.value = ''
+    window.location.href = '/login?pw_changed=1'
   } catch (e: unknown) {
     showError(normalizeError(e))
   } finally { changingPassword.value = false }
@@ -272,6 +283,15 @@ async function registerPasskey() {
   } catch (e: any) {
     if (e.name === 'NotAllowedError') {
       showError(t('account.security.passkeys.timedOut'))
+    } else if (e.name === 'InvalidStateError') {
+      // excludeCredentials hit: this browser already holds a passkey for
+      // the account.
+      showError(t('account.security.passkeys.alreadyRegistered'))
+    } else if (!e.response) {
+      // M-3: WebAuthn DOMExceptions and local throws carry no axios
+      // response; normalizeError would misreport them all as "network
+      // connection failed".
+      showError(t('account.security.passkeys.registrationFailed'))
     } else {
       showError(normalizeError(e))
     }
@@ -281,7 +301,12 @@ async function registerPasskey() {
 const webauthnSupported = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
 async function deleteAccount() {
-  if (deleteConfirmUsername.value !== profile.value?.username) {
+  // U-2: the empty-string check is load-bearing. A blank-username account
+  // (or any future state where profile.username === '') would otherwise
+  // pass '' === '' with zero typing — the exact one-click self-deletion
+  // path found in browser-e2e. The backend now generates usernames on
+  // registration, but this guard protects any pre-backfill/edge state.
+  if (!deleteConfirmUsername.value || deleteConfirmUsername.value !== profile.value?.username) {
     showError(t('account.security.danger.usernameMismatch'))
     return
   }
@@ -341,8 +366,12 @@ onMounted(fetchProfile)
           @submit.prevent="changePassword"
         >
           <div>
-            <label class="block text-sm font-medium text-neutral-700 mb-1">{{ $t('account.security.currentPassword') }}</label>
+            <label
+              class="block text-sm font-medium text-neutral-700 mb-1"
+              for="current-password-input"
+            >{{ $t('account.security.currentPassword') }}</label>
             <input
+              id="current-password-input"
               v-model="oldPassword"
               type="password"
               required
@@ -351,8 +380,12 @@ onMounted(fetchProfile)
             >
           </div>
           <div>
-            <label class="block text-sm font-medium text-neutral-700 mb-1">{{ $t('common.newPassword') }}</label>
+            <label
+              class="block text-sm font-medium text-neutral-700 mb-1"
+              for="new-password-input"
+            >{{ $t('common.newPassword') }}</label>
             <input
+              id="new-password-input"
               v-model="newPassword"
               type="password"
               required
@@ -361,8 +394,12 @@ onMounted(fetchProfile)
             >
           </div>
           <div>
-            <label class="block text-sm font-medium text-neutral-700 mb-1">{{ $t('common.confirmNewPassword') }}</label>
+            <label
+              class="block text-sm font-medium text-neutral-700 mb-1"
+              for="confirm-password-input"
+            >{{ $t('common.confirmNewPassword') }}</label>
             <input
+              id="confirm-password-input"
               v-model="confirmNewPassword"
               type="password"
               required
@@ -405,9 +442,11 @@ onMounted(fetchProfile)
             </p>
             <div class="flex gap-2 max-w-md">
               <input
+                id="mfa-disable-password-input"
                 v-model="disablePassword"
                 type="password"
                 :placeholder="$t('account.security.mfa.disablePlaceholder')"
+                :aria-label="$t('common.password')"
                 class="flex-1 px-3 py-2 border border-neutral-300 rounded-ctl text-sm"
               >
               <button
@@ -428,6 +467,19 @@ onMounted(fetchProfile)
           <p class="text-sm text-neutral-600">
             {{ $t('account.security.mfa.scanQr') }}
           </p>
+          <!-- U-5: QR of the backend-provided otpauth:// URI (MfaController
+               returns otpauth_uri alongside the secret). -->
+          <div
+            v-if="mfaSetupData.otpauth_uri"
+            class="bg-surface p-4 rounded-ctl border border-neutral-200 inline-block mx-auto"
+            data-testid="mfa-setup-qr"
+          >
+            <QrcodeVue
+              :value="mfaSetupData.otpauth_uri"
+              :size="180"
+              level="M"
+            />
+          </div>
           <div class="bg-neutral-50 p-4 rounded-ctl text-center">
             <p class="text-xs text-neutral-500 mb-2">
               {{ $t('account.security.mfa.manualKey') }}
@@ -435,8 +487,12 @@ onMounted(fetchProfile)
             <code class="text-sm font-mono bg-surface px-3 py-1 rounded border select-all">{{ mfaSetupData.secret }}</code>
           </div>
           <div class="max-w-xs">
-            <label class="block text-sm font-medium text-neutral-700 mb-1">{{ $t('account.security.mfa.verificationCode') }}</label>
+            <label
+              class="block text-sm font-medium text-neutral-700 mb-1"
+              for="mfa-verify-code-input"
+            >{{ $t('account.security.mfa.verificationCode') }}</label>
             <input
+              id="mfa-verify-code-input"
               v-model="mfaVerifyCode"
               type="text"
               inputmode="numeric"
@@ -519,9 +575,11 @@ onMounted(fetchProfile)
 
         <div class="flex flex-col sm:flex-row gap-2">
           <input
+            id="passkey-name-input"
             v-model="passkeyName"
             type="text"
             :placeholder="$t('account.security.passkeys.namePlaceholder')"
+            :aria-label="$t('account.security.passkeys.namePlaceholder')"
             class="flex-1 px-3 py-2 text-sm rounded-ctl border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
           >
           <button
@@ -596,10 +654,14 @@ onMounted(fetchProfile)
         </p>
         <div class="space-y-3 max-w-md">
           <div>
-            <label class="block text-sm font-medium text-neutral-700 mb-1">
+            <label
+              class="block text-sm font-medium text-neutral-700 mb-1"
+              for="delete-confirm-username"
+            >
               {{ $t('account.security.danger.typePrefix') }} <strong>{{ profile?.username }}</strong> {{ $t('account.security.danger.typeSuffix') }}
             </label>
             <input
+              id="delete-confirm-username"
               v-model="deleteConfirmUsername"
               type="text"
               autocomplete="off"
@@ -608,7 +670,7 @@ onMounted(fetchProfile)
             >
           </div>
           <button
-            :disabled="deletingAccount || deleteConfirmUsername !== profile?.username"
+            :disabled="deletingAccount || !deleteConfirmUsername || deleteConfirmUsername !== profile?.username"
             class="px-4 py-2 bg-error-600 text-white rounded-ctl text-sm hover:bg-error-700 disabled:opacity-50 disabled:cursor-not-allowed"
             @click="deleteAccount"
           >

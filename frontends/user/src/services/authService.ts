@@ -17,6 +17,17 @@ const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || window.location.origin
 const PKCE_VERIFIER_KEY = 'pkce_code_verifier'
 
 export const authService = {
+  /**
+   * U-4 (browser-e2e 2026-09-08): true when THIS SPA holds the PKCE verifier
+   * for the flow that produced a /callback landing. PKCE is force-enabled
+   * server-side, so without our verifier a code cannot be redeemed here —
+   * attempting it only burns the one-time code that belongs to the flow's
+   * real initiator (an external app that drove the user through authorize).
+   * CallbackPage uses this to decide exchange vs. "return to your app".
+   */
+  hasStashedVerifier(): boolean {
+    return sessionStorage.getItem(PKCE_VERIFIER_KEY) !== null
+  },
   async login(username: string, password: string, scope = 'openid profile email'): Promise<LoginResult> {
     // PKCE (RFC 7636): generate a verifier/challenge pair so the backend's
     // `require_pkce_for_public` enforcement (F-011) does not reject the login.

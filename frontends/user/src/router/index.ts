@@ -93,7 +93,7 @@ const router = createRouter({
 
 router.beforeEach(async (to, _from, next) => {
   const auth = useAuthStore()
-  
+
   // Try to restore session on first navigation to protected route
   if (to.meta.auth && !auth.isAuthenticated) {
     const restored = await auth.restoreSession()
@@ -102,8 +102,19 @@ router.beforeEach(async (to, _from, next) => {
       return
     }
     next({ name: 'login', query: { redirect: to.fullPath } })
-  } else if (to.meta.guest && auth.isAuthenticated) {
-    next({ name: 'dashboard' })
+  } else if (to.meta.guest) {
+    // U-1 (browser-e2e 2026-09-08): isAuthenticated starts OPTIMISTICALLY true
+    // whenever a refresh_token sits in localStorage. If the token was revoked
+    // server-side (e.g. password changed elsewhere), that optimistic flag
+    // used to bounce the user off /login into a zombie dashboard of 401s.
+    // Restore first — restoreSession() clears the flag when the refresh
+    // token is dead — then decide.
+    if (!auth.sessionRestored) await auth.restoreSession()
+    if (auth.isAuthenticated) {
+      next({ name: 'dashboard' })
+    } else {
+      next()
+    }
   } else {
     next()
   }
