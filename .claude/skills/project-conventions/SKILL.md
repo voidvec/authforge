@@ -75,7 +75,7 @@ auto sharedCb = std::make_shared<std::function<void(const ResultType &)>>(
 
 - Input validation on ALL user input
 - ORM Criteria for queries (no string concatenation)
-- SHA-256 + salt for password/client secret hashing
+- Passwords: PBKDF2-SHA256, 310k iterations, random salt; client secrets/tokens: salted SHA-256 (`TokenCrypto::hashToken`)
 - Token TTL: access 1h, refresh 30d
 - PKCE required for public clients
 - Rate limiting on login/token/password-reset endpoints
@@ -85,4 +85,4 @@ auto sharedCb = std::make_shared<std::function<void(const ResultType &)>>(
 - Framework: Google Test via Drogon (`drogon_test.h`)
 - Coverage target: 80%+
 - Handle both storage modes: `MemoryOAuth2Storage` and `PostgreSQL`
-- Test naming: `{Unit|Integration|Security}_{Module}_{Function}_{Scenario}`
+- Test naming: `^(Unit|Integration|E2E|Performance|Security|API|Database|Acceptance)_P[0-3]_<Module>_...` (naming_validator.sh enforces the P-priority segment)
