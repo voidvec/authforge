@@ -10,11 +10,13 @@ on:
     branches: [master]
     paths:
       - 'docs/**'
+      - 'blog/**'
       - 'website/**'
       - '.github/workflows/website.yml'
   pull_request:
     paths:
       - 'docs/**'
+      - 'blog/**'
       - 'website/**'
       - '.github/workflows/website.yml'
   # Manual deploy: lets the site go live from a branch before merge (requires
