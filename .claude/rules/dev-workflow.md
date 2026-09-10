@@ -14,7 +14,8 @@ the steps spelled out.
 
 经验型知识 skills（改错误码/端点前查 `ci-gate-sync`、CI 红灯查 `ci-failure-triage`、发版查
 `release-engineering`、测试查 `test-methodology`、本机环境查 `local-env-runbook`、bench 查
-`benchmark-methodology`、PR 流程查 `pr-workflow`）；推送前预检 `/preflight`。
+`benchmark-methodology`、PR 流程查 `pr-workflow`、部署查 `deployment-runbook`）；推送前预检
+`/preflight`。
 
 ## Backend
 
