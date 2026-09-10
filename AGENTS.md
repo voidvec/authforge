@@ -14,6 +14,9 @@
 | 数据访问 | [`.claude/rules/data-access.md`](.claude/rules/data-access.md) | `libs/storage-*/**` | 指向 db-operations 的存储层触发器（规则同上） |
 | ORM 模型 | [`.claude/rules/orm-models.md`](.claude/rules/orm-models.md) | `**/models/**` | `models/` 下的 ORM 类由 `drogon_ctl` 从 schema 生成，**禁止手改**；要改模型就改 schema 再 `/orm-gen` |
 | 开发流程 | [`.claude/rules/dev-workflow.md`](.claude/rules/dev-workflow.md) | `apps/server/**`、`frontends/**` | 优先 `./manage.sh`（Linux/macOS）/ `./manage.ps1`（Windows）；`/build-and-test` 等 skill 是详解，不是首选入口 |
+| CI 同步点 | [`.claude/rules/sync-points.md`](.claude/rules/sync-points.md) | 错误码/端点/迁移/公共头/golden 相关路径 | 错误码 8 处、端点 5 处同步硬清单，漏一处 CI 必挂 |
+| 前后端契约 | [`.claude/rules/frontend-contract.md`](.claude/rules/frontend-contract.md) | `frontends/**`、`apps/server/openapi.yaml` | 实测契约事实（PKCE 强制、token 内存态、端点口径），写前端/改契约前核对 |
+| 异步补充坑 | [`.claude/rules/async-cpp-gotchas.md`](.claude/rules/async-cpp-gotchas.md) | `libs/**`、`apps/server/**`、`tests/**` | db-operations 之外的实测坑（Session::insert 不覆盖、double-move、`::drogon::` 遮蔽） |
 
 ## 模块级 AGENTS.md
 
@@ -59,7 +62,7 @@ issue forms 只在网页新建流程生效，CLI 会绕过，故以此模板对�
 
 | 目录 | 角色 |
 |---|---|
-| `.claude/` | **规则源头**（`rules/`）、agents、commands、skills、settings —— git 跟踪，权威 |
+| `.claude/` | **规则源头**（`rules/`）、agents、commands、skills、hooks、settings —— git 跟踪，权威 |
 | `.codebuddy/`、`.qoder/`、`.kiro/`、`.zcode/`、`.workbuddy/` | 各 AI 工具的**本地工作区**（各自的 skills 镜像/plans/记忆）——不入库（.gitignore 忽略，磁盘保留） |
 
 **改规则就改 `.claude/rules/`**（唯一副本）。如需在其它工具里生效，由各工具目录的本地副本自行同步，不再要求版本库维护多份一致镜像。不要在 AGENTS.md 或 TECH_SPECS.md 里复制规则正文。入库范围的标准见 [docs/documentation-governance.md](docs/documentation-governance.md)（入库三判据 + 本地维护区约定）。
