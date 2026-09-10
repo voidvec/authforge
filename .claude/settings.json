@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git ls-files '*.cc' '*.h' '*.cpp' '*.hpp' | grep -v '/models/' | xargs -r clang-format -i"
+            "command": "case \"$CLAUDE_FILE_PATH\" in *.cc|*.cpp|*.h|*.hpp) case \"$CLAUDE_FILE_PATH\" in *models/*) ;; *) clang-format -i \"$CLAUDE_FILE_PATH\" ;; esac ;; esac; exit 0"
           }
         ]
       }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ ! -d build/tests ]; then echo 'Build directory not found. Run manage.sh build-backend first.' && exit 1; fi && echo 'Running pre-commit tests...' && cd build/tests && ctest --output-on-failure && echo 'Tests passed, commit allowed' || (echo 'Tests failed, commit blocked' && exit 1)"
+            "command": "bash .claude/hooks/local-gates.sh"
           }
         ]
       },
