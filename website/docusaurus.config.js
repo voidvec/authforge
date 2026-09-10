@@ -63,6 +63,8 @@ const config = {
         blog: {
           path: '../blog',
           routeBasePath: 'blog',
+          // README.md is the directory's convention doc, not a post.
+          exclude: ['README.md'],
           editUrl: 'https://github.com/voidvec/fulla/edit/master',
           showReadingTime: true,
           postsPerPage: 8,
