@@ -53,7 +53,30 @@ const config = {
             'README.md',
           ],
         },
-        blog: false,
+        // Blog lives at the repo root (`../blog`), mirroring the docs-tree
+        // single-source pattern: site content IS repo content. Posts are
+        // English-primary; zh-CN translations seat at
+        // website/i18n/zh-CN/docusaurus-plugin-content-blog/ (same-PR dual
+        // writes when a translation exists; untranslated posts simply do not
+        // appear under /zh-CN, which is the launch-post cadence: EN first,
+        // ZH a week later).
+        blog: {
+          path: '../blog',
+          routeBasePath: 'blog',
+          editUrl: 'https://github.com/voidvec/fulla/edit/master',
+          showReadingTime: true,
+          postsPerPage: 8,
+          blogSidebarCount: 'ALL',
+          blogTitle: 'Fulla Blog',
+          blogDescription: 'Engineering notes on building a C++17 IAM core — benchmarks, OAuth2/OIDC internals, and the road to production.',
+          feedOptions: {
+            type: ['rss', 'atom'],
+            title: 'Fulla Blog',
+            description: 'Engineering notes on building a C++17 IAM core',
+            copyright: 'Copyright © 2026 Luca · AGPL-3.0',
+            language: 'en',
+          },
+        },
         theme: {
           customCss: require.resolve('./src/css/custom.css'),
         },
@@ -67,7 +90,7 @@ const config = {
       require.resolve('@cmfcmf/docusaurus-search-local'),
       {
         indexDocs: true,
-        indexBlog: false,
+        indexBlog: true,
         indexPages: true,
         indexDocSidebarParentCategories: 2,
         language: ['en', 'zh'],
@@ -94,6 +117,7 @@ const config = {
         items: [
           { to: '/docs/intro', label: 'Docs', position: 'left' },
           { to: '/docs/domains/api-reference', label: 'API', position: 'left' },
+          { to: '/blog', label: 'Blog', position: 'left' },
           {
             href: 'https://github.com/voidvec/fulla/blob/master/benchmarks/competitors/results/COMPARISON.md',
             label: 'Benchmarks',
