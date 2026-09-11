@@ -131,6 +131,14 @@ bool isLegacyHash(const std::string &storedHash)
     return storedHash.find("$pbkdf2-sha256$") != 0;
 }
 
+// P1-14 audit fix: a fixed, syntactically valid PBKDF2 digest (random salt +
+// random hash bytes, never a real credential) burned on the early-return
+// paths below so a lookup miss costs the same PBKDF2 work as a hit —
+// otherwise response timing enumerates which identifiers exist.
+constexpr const char *kTimingEqualizerHash =
+  "$pbkdf2-sha256$310000$6f1d9ab04e8c35f27c3a91bd4a70f5e2$"
+  "3f9c1e7a2b8d4f60a5c3e19b7d2f8a4c6e0b3d7f1a9c5e2b8d4f6a0c3e7b1d95";
+
 // U-2 (browser-e2e 2026-09-08): generated username for email-first
 // registrations that leave the username blank ("user_<8 lowercase hex>",
 // charset-safe for Rule.h USERNAME_PATTERN). Uniqueness is enforced by the
@@ -280,6 +288,8 @@ void AuthService::validateUser(
     auto onFound = [allowLegacy, legacyRejectionNotifier, sharedCb, crypto, clock, userRepo, password](std::optional<UserData> found) {
         if (!found)
         {
+            // P1-14: same KDF cost as the found path (see kTimingEqualizerHash).
+            verifyPassword(password, kTimingEqualizerHash, "", *crypto);
             (*sharedCb)(std::nullopt);
             return;
         }
@@ -288,6 +298,8 @@ void AuthService::validateUser(
         int64_t now = clock->nowSeconds();
         if (user.lockedUntil > now)
         {
+            // P1-14: locked accounts also pay the KDF cost.
+            verifyPassword(password, kTimingEqualizerHash, "", *crypto);
             (*sharedCb)(std::nullopt);
             return;
         }
@@ -306,6 +318,8 @@ void AuthService::validateUser(
         {
             if (legacyRejectionNotifier)
                 legacyRejectionNotifier(user.id);
+            // P1-14: policy rejection pays the KDF cost too.
+            verifyPassword(password, kTimingEqualizerHash, "", *crypto);
             (*sharedCb)(std::nullopt);
             return;
         }

@@ -614,6 +614,7 @@ void MfaController::verifyLogin(
         return;
     }
 
+
     if (clientId.empty() || redirectUri.empty())
     {
         ::fulla::common::error::ErrorResponder::respond(
@@ -713,9 +714,13 @@ void MfaController::verifyLogin(
                             std::function<void(std::function<void()> &&)> clearPendingBinding
                           ) {
         elevateSessionAfterMfa();
-        plugin->validateClient(
+        // P0-4 audit fix: the shared issuance guard replaces the former
+        // validateClient + validateRedirectUri pair and adds the scope
+        // allowlist check neither of them performed.
+        plugin->checkCodeIssuanceGuards(
           clientId,
-          "",
+          redirectUri,
+          scope,
           [sharedCb,
            req,
            plugin,
@@ -729,45 +734,22 @@ void MfaController::verifyLogin(
            mfaAuthTime,
            mfaAmr,
            clearPendingBinding,
-           codeVerifier](bool validClient) {
-              if (!validClient)
+           codeVerifier](::OAuth2Plugin::CodeIssuanceGuardResult guard) {
+              if (!guard.ok)
               {
+                  // #144 contract: verifyLogin answers every client/redirect/
+                  // scope rejection with the SAME generic AUTH_INVALID_CREDENTIALS
+                  // (401) — distinguishing unknown-client / unregistered-redirect
+                  // / over-scope would give a prober an oracle. The guard's
+                  // specific reason stays in the server-side log detail.
                   respondError(
                     req,
                     sharedCb,
                     "AUTH_INVALID_CREDENTIALS",
-                    "verifyLogin: unknown or invalid client"
+                    "verifyLogin: code issuance guard rejected the request: " + guard.detail
                   );
                   return;
               }
-
-              plugin->validateRedirectUri(
-                clientId,
-                redirectUri,
-                [sharedCb,
-                 req,
-                 plugin,
-                 clientId,
-                 redirectUri,
-                 publicSub,
-                 pendingClientId,
-                 pendingRedirectUri,
-                 scope,
-                 nonce,
-                 mfaAuthTime,
-                 mfaAmr,
-                 clearPendingBinding,
-                 codeVerifier](bool validUri) {
-                    if (!validUri)
-                    {
-                        respondError(
-                          req,
-                          sharedCb,
-                          "AUTH_INVALID_CREDENTIALS",
-                          "verifyLogin: redirect_uri not registered for client"
-                        );
-                        return;
-                    }
 
                     if (clientId != pendingClientId || redirectUri != pendingRedirectUri)
                     {
@@ -876,30 +858,19 @@ void MfaController::verifyLogin(
                       mfaAuthTime,
                       mfaAmr
                     );
-                }
-              );
-          }
-        );
+              }
+          );
     };
 
     // Task 24 slice 5: prefer the injected MfaService/IUserRepository,
     // falling back to the pre-Task-24 raw SQL when unwired -- same
     // injected-with-fallback pattern established by SessionController's
-    // Task 24 slice 4. mfaToken IS the internal user id, stringified (see
-    // SessionController::login()'s `mfaResp["mfa_token"] =
-    // std::to_string(internalId);`), so no public_sub resolution step is
-    // needed here.
+    // Task 24 slice 4. P2-2: mfaToken is now the PUBLIC subject (login
+    // stopped handing out the internal auto-increment id); resolve it via
+    // findByPublicSub.
     if (mfaService_ && userRepo_)
     {
-        // int32: user ids are int32 end-to-end (Task 39 direction Y, DB int4);
-        // std::stoi throws out_of_range for values beyond int32, which the
-        // catch below already treats as an invalid MFA session.
-        int32_t userId = 0;
-        try
-        {
-            userId = std::stoi(mfaToken);
-        }
-        catch (const std::exception &)
+        if (mfaToken.empty())
         {
             respondError(
               req, sharedCb, "AUTH_INVALID_CREDENTIALS", "verifyLogin: invalid MFA session"
@@ -907,11 +878,9 @@ void MfaController::verifyLogin(
             return;
         }
 
-        userRepo_->findById(
-          userId,
-          [this, sharedCb, req, code, userId, onTotpVerified](
-            std::optional<fulla::identity::UserData> user
-          ) {
+        userRepo_->findByPublicSub(
+          mfaToken,
+          [this, sharedCb, req, code, mfaToken, onTotpVerified](std::optional<fulla::identity::UserData> user) {
               if (!user)
               {
                   respondError(
@@ -923,7 +892,8 @@ void MfaController::verifyLogin(
               // code + tokens), so the same liveness rules as the login
               // entry apply: a user soft-deleted or locked between the first
               // factor and this second factor must not receive fresh tokens.
-              // findById already filters deleted_at; locked is checked here.
+              // findByPublicSub already filters deleted_at; locked is checked
+              // here.
               int64_t nowSecs = std::chrono::duration_cast<std::chrono::seconds>(
                                   std::chrono::system_clock::now().time_since_epoch()
               )
@@ -936,6 +906,7 @@ void MfaController::verifyLogin(
                   return;
               }
               std::string publicSub = user->publicSub;
+              int32_t userId = user->id;
               mfaService_->verifyLoginCode(
                 userId,
                 code,
@@ -974,12 +945,8 @@ void MfaController::verifyLogin(
         return;
     }
 
-    int32_t fallbackUserId = 0;
-    try
-    {
-        fallbackUserId = std::stoi(mfaToken);
-    }
-    catch (const std::exception &)
+    // P2-2: legacy fallback — mfaToken is the public subject here too.
+    if (mfaToken.empty())
     {
         respondError(req, sharedCb, "AUTH_INVALID_CREDENTIALS", "verifyLogin: invalid MFA session");
         return;
@@ -994,7 +961,7 @@ void MfaController::verifyLogin(
     try
     {
         Mapper<drogon_model::fulla_db::Users>(db).findBy(
-          Criteria(drogon_model::fulla_db::Users::Cols::_id, CompareOperator::EQ, fallbackUserId) &&
+          Criteria(drogon_model::fulla_db::Users::Cols::_public_sub, CompareOperator::EQ, mfaToken) &&
             Criteria(drogon_model::fulla_db::Users::Cols::_deleted_at, CompareOperator::IsNull),
           [sharedCb, code, mfaToken, req, clientId, redirectUri, scope, nonce, plugin, mfaAuthTime, mfaAmr, elevateSessionAfterMfa](
             const std::vector<drogon_model::fulla_db::Users> &users
@@ -1034,9 +1001,13 @@ void MfaController::verifyLogin(
               // elevated to amr="pwd mfa" and the mfa_pending marker cleared
               // (never before verification).
               elevateSessionAfterMfa();
-              plugin->validateClient(
+              // P0-4 audit fix: shared issuance guard (client existence +
+              // registered redirect_uri + scope allowlist) replaces the
+              // former validateClient + validateRedirectUri pair.
+              plugin->checkCodeIssuanceGuards(
                 clientId,
-                "",
+                redirectUri,
+                scope,
                 [sharedCb,
                  req,
                  plugin,
@@ -1049,44 +1020,18 @@ void MfaController::verifyLogin(
                  nonce,
                  mfaToken,
                  mfaAuthTime,
-                 mfaAmr](bool validClient) {
-                    if (!validClient)
+                 mfaAmr](::OAuth2Plugin::CodeIssuanceGuardResult guard) {
+                    if (!guard.ok)
                     {
+                        // #144 contract: same generic 401 as the wired path.
                         respondError(
                           req,
                           sharedCb,
                           "AUTH_INVALID_CREDENTIALS",
-                          "verifyLogin: unknown or invalid client"
+                          "verifyLogin: code issuance guard rejected the request: " + guard.detail
                         );
                         return;
                     }
-
-                    plugin->validateRedirectUri(
-                      clientId,
-                      redirectUri,
-                      [sharedCb,
-                       req,
-                       plugin,
-                       clientId,
-                       redirectUri,
-                       publicSub,
-                       pendingClientId,
-                       pendingRedirectUri,
-                       scope,
-                       nonce,
-                       mfaToken,
-                       mfaAuthTime,
-                       mfaAmr](bool validUri) {
-                          if (!validUri)
-                          {
-                              respondError(
-                                req,
-                                sharedCb,
-                                "AUTH_INVALID_CREDENTIALS",
-                                "verifyLogin: redirect_uri not registered for client"
-                              );
-                              return;
-                          }
 
                           if (clientId != pendingClientId || redirectUri != pendingRedirectUri)
                           {
@@ -1172,21 +1117,13 @@ void MfaController::verifyLogin(
                                       };
                                       if (clearDb)
                                       {
-                                          int32_t clearUserId = 0;
-                                          try
-                                          {
-                                              clearUserId = std::stoi(mfaToken);
-                                          }
-                                          catch (const std::exception &)
-                                          {
-                                              sendSuccess();
-                                              return;
-                                          }
+                                          // P2-2: mfaToken is the public subject —
+                                          // clear the pending binding by public_sub.
                                           Mapper<drogon_model::fulla_db::Users>(clearDb).findBy(
                                             Criteria(
-                                              drogon_model::fulla_db::Users::Cols::_id,
+                                              drogon_model::fulla_db::Users::Cols::_public_sub,
                                               CompareOperator::EQ,
-                                              clearUserId
+                                              mfaToken
                                             ),
                                             [sendSuccess, clearDb](
                                               const std::vector<drogon_model::fulla_db::Users> &u
@@ -1238,10 +1175,8 @@ void MfaController::verifyLogin(
                             mfaAuthTime,
                             mfaAmr
                           );
-                      }
-                    );
-                }
-              );
+                    }
+                );
               return;
           }
 

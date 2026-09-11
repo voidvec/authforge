@@ -60,6 +60,27 @@ void RedisGrantRepository::saveAuthCode(const OAuth2AuthCode &code, VoidCallback
     val["redirect_uri"] = code.redirectUri;
     val["expires_at"] = (Json::Int64)code.expiresAt;
     val["used"] = code.used;
+    // P0-5 audit fix: the serialization previously dropped the PKCE pair,
+    // nonce, auth_time and amr, so code exchange in this storage mode never
+    // verified PKCE and never echoed nonce/auth claims. Persist them
+    // (omitted when empty so old rows stay readable).
+    if (!code.codeChallenge.empty())
+    {
+        val["code_challenge"] = code.codeChallenge;
+        val["code_challenge_method"] = code.codeChallengeMethod;
+    }
+    if (!code.nonce.empty())
+    {
+        val["nonce"] = code.nonce;
+    }
+    if (code.authTime > 0)
+    {
+        val["auth_time"] = (Json::Int64)code.authTime;
+    }
+    if (!code.amr.empty())
+    {
+        val["amr"] = code.amr;
+    }
     std::string jsonStr = jsonToString(val);
 
     auto now = std::chrono::system_clock::now();
@@ -127,6 +148,13 @@ void RedisGrantRepository::getAuthCode(const std::string &code, AuthCodeCallback
           authCode.redirectUri = json["redirect_uri"].asString();
           authCode.expiresAt = json["expires_at"].asInt64();
           authCode.used = json["used"].asBool();
+          // P0-5: fields absent in pre-fix rows read back as jsoncpp's
+          // default values ("" / 0) — same shape the DTO default-initializes.
+          authCode.codeChallenge = json["code_challenge"].asString();
+          authCode.codeChallengeMethod = json["code_challenge_method"].asString();
+          authCode.nonce = json["nonce"].asString();
+          authCode.authTime = json["auth_time"].asInt64();
+          authCode.amr = json["amr"].asString();
           cb(authCode);
       },
       [cb, codeStr = code](const RedisException &e) {
@@ -202,8 +230,16 @@ void RedisGrantRepository::consumeAuthCode(
         local json = cjson.decode(val)
         if json.used then return nil end
         -- CRITICAL: Validate redirect_uri matches authorization
-        -- Per OAuth2 RFC 6749 Section 4.1.3
-        if redirect_uri ~= "" and redirect_uri ~= json.redirect_uri then
+        -- Per OAuth2 RFC 6749 Section 4.1.3. P0-5 audit fix: this previously
+        -- skipped the check whenever the REQUEST side was empty, letting a
+        -- token-request omit redirect_uri to bypass the binding. The
+        -- Postgres repository's semantics are authoritative: when a
+        -- redirect_uri was recorded at authorization time it is REQUIRED at
+        -- the token endpoint and MUST be identical — an empty request value
+        -- fails just like any other mismatch.
+        local stored = json.redirect_uri
+        if stored == cjson.null then stored = '' end
+        if stored ~= '' and redirect_uri ~= stored then
             return nil
         end
         json.used = true
@@ -253,6 +289,14 @@ void RedisGrantRepository::consumeAuthCode(
           authCode.redirectUri = json["redirect_uri"].asString();
           authCode.expiresAt = json["expires_at"].asInt64();
           authCode.used = true;  // We just marked it
+          // P0-5: round-trip the PKCE pair + OIDC context so the token
+          // endpoint enforces the verifier and echoes nonce/auth claims in
+          // this storage mode too.
+          authCode.codeChallenge = json["code_challenge"].asString();
+          authCode.codeChallengeMethod = json["code_challenge_method"].asString();
+          authCode.nonce = json["nonce"].asString();
+          authCode.authTime = json["auth_time"].asInt64();
+          authCode.amr = json["amr"].asString();
 
           cb(authCode);
       },

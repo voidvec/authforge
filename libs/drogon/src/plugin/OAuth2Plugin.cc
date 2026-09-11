@@ -683,6 +683,62 @@ void OAuth2Plugin::validateRedirectUri(
     clientService_->validateRedirectUri(clientId, redirectUri, std::move(callback));
 }
 
+void OAuth2Plugin::checkCodeIssuanceGuards(
+  const std::string &clientId,
+  const std::string &redirectUri,
+  const std::string &scope,
+  CodeIssuanceGuardCallback &&callback
+)
+{
+    // P0-4: single chokepoint for the three RFC 6749 hard requirements the
+    // non-authorize issuance paths skipped: client existence (2.2),
+    // registered-redirect_uri exact match (3.1.2.3) and scope containment in
+    // the client's registered allowlist (3.3). An empty requested scope is
+    // allowed (matching authorize's behavior — no scopes requested).
+    if (clientId.empty() || redirectUri.empty())
+    {
+        callback({false,
+                  "VALIDATION_MISSING_REQUIRED_FIELD",
+                  "code issuance requires client_id and redirect_uri"});
+        return;
+    }
+    if (!clientRepo_)
+    {
+        callback({false, "INTERNAL_ERROR", "client repository not available"});
+        return;
+    }
+    clientRepo_->getClient(
+      clientId,
+      [clientId, redirectUri, scope, callback = std::move(callback)](
+        std::optional<fulla::oauth2::model::OAuth2Client> clientOpt) mutable {
+          if (!clientOpt)
+          {
+              callback({false,
+                        "VALIDATION_INVALID_INPUT",
+                        "unknown client_id '" + clientId + "'"});
+              return;
+          }
+          fulla::oauth2::model::Client aggregate(std::move(*clientOpt));
+          if (!aggregate.isRegisteredRedirectUri(redirectUri))
+          {
+              callback({false,
+                        "VALIDATION_REDIRECT_URI_NOT_REGISTERED",
+                        "redirect_uri is not registered for client '" + clientId + "'"});
+              return;
+          }
+          if (!scope.empty() && !aggregate.allowsAllScopes(scope))
+          {
+              callback({false,
+                        "VALIDATION_INVALID_INPUT",
+                        "requested scope exceeds the scopes registered for client '" +
+                          clientId + "'"});
+              return;
+          }
+          callback({true, "", ""});
+      }
+    );
+}
+
 void OAuth2Plugin::generateAuthorizationCode(
   const std::string &clientId,
   const std::string &subject,

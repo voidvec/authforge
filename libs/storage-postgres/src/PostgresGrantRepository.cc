@@ -60,6 +60,12 @@ void PostgresGrantRepository::saveAuthCode(const OAuth2AuthCode &code, VoidCallb
         {
             newCode.setAmr(code.amr);
         }
+        // P0-1 audit fix: persist the OIDC nonce so the token endpoint can
+        // echo it into the id_token (OIDC Core 3.1.3.7). V032 column.
+        if (!code.nonce.empty())
+        {
+            newCode.setNonce(code.nonce);
+        }
 
         mapper.insert(
           newCode,
@@ -113,6 +119,8 @@ void PostgresGrantRepository::getAuthCode(const std::string &code, AuthCodeCallb
               // the DTO's default-initialized fields.
               c.authTime = row.getValueOfAuthTime();
               c.amr = row.getValueOfAmr();
+              // P0-1: nonce round-trips with the code row.
+              c.nonce = row.getValueOfNonce();
               (*sharedCb)(c);
           },
           [sharedCb](const DrogonDbException &e) {
@@ -184,11 +192,11 @@ void PostgresGrantRepository::consumeAuthCode(
     // F-022: RETURNING now also selects auth_time/amr so the consumed code
     // carries them to the id_token issuance path.
     dbClientMaster_->execSqlAsync(
-      "UPDATE oauth2_codes SET used = true "
-      "WHERE code = $1 AND used = false "
-      "RETURNING code, client_id, user_id, scope, redirect_uri, "
-      "code_challenge, code_challenge_method, expires_at, "
-      "auth_time, amr",
+        "UPDATE oauth2_codes SET used = true "
+        "WHERE code = $1 AND used = false "
+        "RETURNING code, client_id, user_id, scope, redirect_uri, "
+        "code_challenge, code_challenge_method, expires_at, "
+        "auth_time, amr, nonce",
       [sharedCb, redirectUri, code](const ::drogon::orm::Result &r) {
           if (r.empty())
           {
@@ -230,6 +238,8 @@ void PostgresGrantRepository::consumeAuthCode(
           // are nullable; treat NULL as the DTO default (0 / empty).
           c.authTime = row["auth_time"].isNull() ? 0 : row["auth_time"].as<int64_t>();
           c.amr = row["amr"].isNull() ? "" : row["amr"].as<std::string>();
+          // P0-1: nonce round-trips with the consumed code row.
+          c.nonce = row["nonce"].isNull() ? "" : row["nonce"].as<std::string>();
           (*sharedCb)(c);
       },
       [sharedCb, code](const DrogonDbException &e) {

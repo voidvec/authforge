@@ -301,13 +301,26 @@ std::string TokenEndpointController::rateLimitKey(
   const std::string &clientId
 )
 {
-    // IP convention matches DrogonAuditSink: X-Forwarded-For, then X-Real-IP,
-    // then the TCP peer. Behind a reverse proxy the operator is responsible
-    // for setting X-Forwarded-For correctly (and stripping client-supplied
-    // values at the edge).
-    std::string ip = req->getHeader("X-Forwarded-For");
-    if (ip.empty())
-        ip = req->getHeader("X-Real-IP");
+    // P1-9 audit fix: the failure limiter keys on the TCP peer address by
+    // default. X-Forwarded-For / X-Real-IP are client-forgeable headers —
+    // trusting them unconditionally let a direct-connection attacker rotate
+    // the key on every request and bypass the (ip, client_id) bucket. They
+    // are honored only behind an explicit operator opt-in
+    // (auth.rate_limit_trust_forwarded_for=true), which a reverse-proxy
+    // deployment that correctly sets/strips these headers sets.
+    static const bool trustForwarded = [] {
+        const auto &cfg = ::drogon::app().getCustomConfig();
+        return cfg.isMember("auth") &&
+               cfg.isMember("rate_limit_trust_forwarded_for") &&
+               cfg["auth"]["rate_limit_trust_forwarded_for"].asBool();
+    }();
+    std::string ip;
+    if (trustForwarded)
+    {
+        ip = req->getHeader("X-Forwarded-For");
+        if (ip.empty())
+            ip = req->getHeader("X-Real-IP");
+    }
     if (ip.empty())
         ip = req->getPeerAddr().toIp();
     // client_id may be empty (malformed request) -- still bucket on IP alone
@@ -431,9 +444,11 @@ std::string TokenEndpointController::enforceClientAuthMethod(
             return "client requires token_endpoint_auth_method=client_secret_post (body)";
         return "";
     }
-    // Unknown declared value: treat leniently (do not block) to avoid breaking
-    // clients with forward-compat values the server does not yet recognize.
-    return "";
+    // P2-14 audit fix: an UNRECOGNIZED declared value previously fell
+    // through leniently, so a malformed DB row (e.g. "none " with trailing
+    // space) silently disabled the whole method-binding policy. Fail
+    // closed: only the three known values pass.
+    return "client declared unrecognized token_endpoint_auth_method '" + declaredMethod + "'";
 }
 
 void TokenEndpointController::introspect(
@@ -2027,9 +2042,25 @@ void TokenEndpointController::userInfo(
               }
               else
               {
-                  // Fallback to using userId as name
-                  userInfo["username"] = userId;
-                  userInfo["name"] = userId;
+                  // P2-5 audit fix: a bearer token whose subject resolves to
+                  // no live user is not a valid token for userinfo purposes —
+                  // answer 401 invalid_token (RFC 6750 3) instead of
+                  // fabricating a 200 profile from the subject string.
+                  auto resp = ::drogon::HttpResponse::newHttpResponse();
+                  resp->setStatusCode(::drogon::k401Unauthorized);
+                  resp->addHeader(
+                    "WWW-Authenticate",
+                    "Bearer realm=\"fulla\", error=\"invalid_token\", "
+                    "error_description=\"token subject no longer resolves to a user\""
+                  );
+                  Json::Value err;
+                  err["error"] = "invalid_token";
+                  err["error_description"] = "Token subject no longer resolves to a user";
+                  resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
+                  Json::StreamWriterBuilder w;
+                  resp->setBody(Json::writeString(w, err));
+                  callback(resp);
+                  return;
               }
 
               // Add roles

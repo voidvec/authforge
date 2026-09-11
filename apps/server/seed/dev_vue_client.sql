@@ -19,9 +19,15 @@ VALUES (
 )
 ON CONFLICT (client_id) DO NOTHING;
 
--- Grant default scopes to vue-client
+-- Grant the vue-client its full advertised scope set.
+-- P0-4 audit companion: the issuance guard now enforces the client scope
+-- allowlist on every code path (login/MFA/consent/device), and the default
+-- scopes (is_default = openid+profile) do NOT include email — while both
+-- config.json's clients.vue-client.allowed_scopes and the portal's default
+-- scope string ("openid profile email") advertise it. Grant explicitly by
+-- name so the seed matches the declared contract.
 INSERT INTO oauth2_client_scopes (client_id, scope_name)
 SELECT 'vue-client', name
 FROM oauth2_scopes
-WHERE is_default = TRUE
+WHERE name IN ('openid', 'profile', 'email')
 ON CONFLICT (client_id, scope_name) DO NOTHING;

@@ -60,27 +60,26 @@
             "gif",
             "png",
             "jpg",
+            "jpeg",
             "js",
             "css",
             "html",
             "ico",
-            "swf",
-            "xap",
-            "apk",
-            "cur",
-            "xml",
-            "webp",
             "svg",
-            "yaml",
-            "yml"
-        ],
+            "webp"
+            ],
+            // P1-15 audit fix: innocuous static assets only. The previous list
+            // included json/yaml/yml, and locations.allow_all=true made Drogon
+            // skip extension checks entirely, so GET /config.json echoed the
+            // DB/Redis credentials in every deployment layout.
+
         "mime": {},
         "locations": [
             {
                 "default_content_type": "text/plain",
                 "alias": "",
                 "is_case_sensitive": true,
-                "allow_all": true,
+                "allow_all": false,
                 "is_recursive": true,
                 "filters": []
             }
@@ -158,7 +157,8 @@
                     {
                         "urls": [
                             "^/oauth2/login",
-                            "^/oauth2/password/change"
+                            "^/oauth2/password/change",
+                            "^/oauth2/mfa/verify"
                         ],
                         "capacity": 5000,
                         "ip_capacity": 3,
@@ -239,6 +239,10 @@
             "require_email_verification": true,
             "require_pkce_for_public": true,
             "allow_http_redirect_uri": false,
+            // P1-15/P1-9 audit companions: the edge nginx terminates TLS and
+            // sets X-Forwarded-For, so the process failure-limiter may key on
+            // it (dev/direct deployments stay on the TCP peer by default).
+            "rate_limit_trust_forwarded_for": true,
             "rate_limit": {
                 "max_failures": 30,
                 "window_seconds": 60

@@ -11,14 +11,11 @@ std::string generateSecureToken(fulla::common::ports::ICryptoProvider &crypto, s
     std::vector<unsigned char> buffer(bytes);
     if (!crypto.secureRandomBytes(buffer.data(), bytes))
     {
-        // Should never happen (see CryptoUtils.h's identical fallback
-        // rationale) -- this Domain-layer version has no UUID-generator
-        // port dependency to fall back to, so it degrades to re-hashing
-        // an all-zero buffer's encoding rather than pulling in another
-        // port for a "should never happen" path. secureRandomBytes
-        // failing at all indicates a broken CSPRNG, at which point no
-        // fallback here is meaningfully more secure than another.
-        return crypto.base64UrlEncode(buffer.data(), buffer.size());
+        // P2-1 audit fix: CSPRNG failure must NOT mint tokens. The previous
+        // behavior base64url-encoded the untouched (zero) buffer — a fully
+        // deterministic, guessable credential. Return "" so callers treat an
+        // empty token as issuance failure (fail-closed).
+        return "";
     }
     return crypto.base64UrlEncode(buffer.data(), buffer.size());
 }

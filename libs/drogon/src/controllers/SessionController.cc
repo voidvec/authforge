@@ -1,6 +1,7 @@
 #include <mutex>
 #include <fulla/drogon/controllers/SessionController.h>
 #include <fulla/drogon/utils/ConsentCsrfSlots.h>
+#include <fulla/drogon/utils/CryptoUtils.h>
 #include <fulla/drogon/utils/PasswordHasher.h>
 #include <fulla/drogon/utils/PortalUrl.h>
 #include <fulla/storage/postgres/models/Users.h>
@@ -852,16 +853,20 @@ void SessionController::login(
                 Criteria mfaCrit(Users::Cols::_id, CompareOperator::EQ, internalId);
                 Mapper<Users>(db).findOne(
                   mfaCrit,
-                  [req, internalId, sharedCb, db, clientId, redirectUri, codeChallenge, codeChallengeMethod](const Users &user) {
+                  [req, internalId, publicSub, sharedCb, db, clientId, redirectUri, codeChallenge, codeChallengeMethod](const Users &user) {
                       Users mfaUpdated = user;
                       mfaUpdated.setMfaPendingClientId(clientId);
                       mfaUpdated.setMfaPendingRedirectUri(redirectUri);
                       Mapper<Users>(db).update(
                         mfaUpdated,
-                        [req, internalId, sharedCb](const size_t) {
+                        [req, internalId, publicSub, sharedCb](const size_t) {
                             Json::Value mfaResp;
                             mfaResp["mfa_required"] = true;
-                            mfaResp["mfa_token"] = std::to_string(internalId);
+                            // P2-2: hand out the PUBLIC subject, not the
+                            // internal auto-increment id (anti-enumeration,
+                            // mirrors the public_sub design). verifyLogin
+                            // resolves it back via findByPublicSub.
+                            mfaResp["mfa_token"] = publicSub;
                             mfaResp["message"] =
                               "MFA verification required. Submit TOTP code to "
                               "/oauth2/mfa/verify";
@@ -893,66 +898,6 @@ void SessionController::login(
                 return;
             }
 
-            // === CHECK 3: PKCE enforcement ===
-            // F-011 (RFC 9700 §2.1.1): PKCE is MANDATORY for all OAuth 2.0
-            // authorization_code clients, so the code default is true when the
-            // config key is absent; auth.require_pkce_for_public can still
-            // opt a deployment out explicitly.
-            bool requirePkce = true;
-            if (
-              customCfg.isMember("auth") && customCfg["auth"].isMember("require_pkce_for_public")
-            )
-            {
-                requirePkce = customCfg["auth"]["require_pkce_for_public"].asBool();
-            }
-            if (requirePkce && codeChallenge.empty())
-            {
-                LOG_WARN << "[SECURITY] PUBLIC client " << clientId
-                         << " login without PKCE (enforcement enabled)";
-                // F-007 (RFC 6749 §4.1.2.1): this error belongs to the
-                // authorization request, so it is redirected back to the
-                // client -- but only after redirect_uri is verified, since
-                // /oauth2/login does not re-validate it earlier in the flow
-                // (avoids an open-redirect vector).
-                auto pkcePlugin = resolvePlugin();
-                if (pkcePlugin && !clientId.empty() && !redirectUri.empty())
-                {
-                    pkcePlugin->validateRedirectUri(
-                      clientId,
-                      redirectUri,
-                      [req, redirectUri, state, callback = std::move(callback)](
-                        bool validUri
-                      ) mutable {
-                          if (validUri)
-                          {
-                              sendOAuthErrorRedirect(
-                                callback,
-                                redirectUri,
-                                "invalid_request",
-                                "PKCE (code_challenge) is required for public clients",
-                                state
-                              );
-                              return;
-                          }
-                          respondError(
-                            req,
-                            std::move(callback),
-                            "VALIDATION_MISSING_REQUIRED_FIELD",
-                            "login: PKCE (code_challenge) is required for public clients"
-                          );
-                      }
-                    );
-                    return;
-                }
-                respondError(
-                  req,
-                  std::move(callback),
-                  "VALIDATION_MISSING_REQUIRED_FIELD",
-                  "login: PKCE (code_challenge) is required for public clients"
-                );
-                return;
-            }
-
             auto plugin = resolvePlugin();
             if (!plugin)
             {
@@ -962,65 +907,139 @@ void SessionController::login(
                 return;
             }
 
-            // F-022 (OIDC Core §3.1.3.7): read the auth_time/amr we just
-            // recorded on the session (password-only -> "pwd") so the
-            // authorization code carries them to the id_token issuance path.
-            int64_t sessAuthTime = 0;
-            std::string sessAmr;
-            if (req->session())
-            {
-                if (req->session()->find("auth_time"))
-                    sessAuthTime = req->session()->get<int64_t>("auth_time");
-                if (req->session()->find("amr"))
-                    sessAmr = req->session()->get<std::string>("amr");
-            }
-
-            plugin->generateAuthorizationCode(
+            // === CHECK 3: hard authorization boundary (P0-4) ===
+            // login is a first-party portal endpoint, but it mints the same
+            // authorization codes /oauth2/authorize does — it must enforce
+            // the same RFC 6749 hard requirements: known client,
+            // registered redirect_uri (an unvalidated success 302 here was
+            // an open redirect) and scope containment in the client
+            // allowlist.
+            plugin->checkCodeIssuanceGuards(
               clientId,
-              publicSub,
-              scope,
               redirectUri,
-              codeChallenge,
-              codeChallengeMethod,
-              nonce,
+              scope,
               [req,
+               plugin,
+               clientId,
+               publicSub,
+               scope,
                redirectUri,
                state,
                codeChallenge,
                codeChallengeMethod,
-               callback =
-                 std::move(callback)](bool success, std::string code, std::string error) mutable {
-                  if (!success)
+               nonce,
+               customCfg,
+               callback = std::move(callback)](
+                ::OAuth2Plugin::CodeIssuanceGuardResult guard) mutable {
+                  if (!guard.ok)
                   {
                       respondError(
-                        req,
-                        std::move(callback),
-                        "INTERNAL_ERROR",
-                        "login: failed to generate authorization code: " + error
+                        req, std::move(callback), guard.errorCode, "login: " + guard.detail
                       );
                       return;
                   }
 
-                  // F-020 (RFC 6749 §4.1.2/§4.1.3): urlEncode code + state.
-                  std::string location =
-                    redirectUri + "?code=" + ::drogon::utils::urlEncode(code);
-                  if (!state.empty())
-                      location += "&state=" + ::drogon::utils::urlEncode(state);
-                  if (req->getParameter("json") == "true")
+                  // === CHECK 4: PKCE enforcement ===
+                  // F-011 (RFC 9700 2.1.1): PKCE is MANDATORY for all
+                  // authorization_code clients; auth.require_pkce_for_public
+                  // can still opt a deployment out explicitly.
+                  bool requirePkce = true;
+                  if (
+                    customCfg.isMember("auth") &&
+                    customCfg["auth"].isMember("require_pkce_for_public")
+                  )
                   {
-                      Json::Value ret;
-                      ret["code"] = code;
-                      ret["location"] = location;
-                      auto resp = ::drogon::HttpResponse::newHttpJsonResponse(ret);
-                      callback(resp);
+                      requirePkce = customCfg["auth"]["require_pkce_for_public"].asBool();
+                  }
+                  if (requirePkce && codeChallenge.empty())
+                  {
+                      LOG_WARN << "[SECURITY] PUBLIC client " << clientId
+                               << " login without PKCE (enforcement enabled)";
+                      // The guard above already verified redirect_uri is
+                      // registered, so the error goes straight back to the
+                      // client per F-007 (RFC 6749 4.1.2.1).
+                      sendOAuthErrorRedirect(
+                        callback,
+                        redirectUri,
+                        "invalid_request",
+                        "PKCE (code_challenge) is required for public clients",
+                        state
+                      );
                       return;
                   }
-                  auto resp = ::drogon::HttpResponse::newRedirectionResponse(location);
-                  callback(resp);
-              },
-              sessAuthTime,
-              sessAmr
-            );
+                  // P2-6(4): reject a malformed code_challenge upfront (RFC
+                  // 7636 4.2 charset/length); an over-long value would
+                  // otherwise overflow the VARCHAR(128) column and surface
+                  // as a dead code at exchange time.
+                  if (!codeChallenge.empty() &&
+                      !::fulla::drogon::utils::isValidCodeChallenge(codeChallenge))
+                  {
+                      sendOAuthErrorRedirect(
+                        callback,
+                        redirectUri,
+                        "invalid_request",
+                        "code_challenge must be 43-128 characters of [A-Za-z0-9-._~]",
+                        state
+                      );
+                      return;
+                  }
+
+                  // F-022 (OIDC Core 3.1.3.7): read the auth_time/amr we
+                  // just recorded on the session (password-only -> "pwd") so
+                  // the authorization code carries them to the id_token
+                  // issuance path.
+                  int64_t sessAuthTime = 0;
+                  std::string sessAmr;
+                  if (req->session())
+                  {
+                      if (req->session()->find("auth_time"))
+                          sessAuthTime = req->session()->get<int64_t>("auth_time");
+                      if (req->session()->find("amr"))
+                          sessAmr = req->session()->get<std::string>("amr");
+                  }
+
+                  plugin->generateAuthorizationCode(
+                    clientId,
+                    publicSub,
+                    scope,
+                    redirectUri,
+                    codeChallenge,
+                    codeChallengeMethod,
+                    nonce,
+                    [req, redirectUri, state, callback = std::move(callback)](
+                      bool success, std::string code, std::string error) mutable {
+                        if (!success)
+                        {
+                            respondError(
+                              req,
+                              std::move(callback),
+                              "INTERNAL_ERROR",
+                              "login: failed to generate authorization code: " + error
+                            );
+                            return;
+                        }
+
+                        // F-020 (RFC 6749 4.1.2/4.1.3): urlEncode code + state.
+                        std::string location =
+                          redirectUri + "?code=" + ::drogon::utils::urlEncode(code);
+                        if (!state.empty())
+                            location += "&state=" + ::drogon::utils::urlEncode(state);
+                        if (req->getParameter("json") == "true")
+                        {
+                            Json::Value ret;
+                            ret["code"] = code;
+                            ret["location"] = location;
+                            auto resp = ::drogon::HttpResponse::newHttpJsonResponse(ret);
+                            callback(resp);
+                            return;
+                        }
+                        auto resp = ::drogon::HttpResponse::newRedirectionResponse(location);
+                        callback(resp);
+                    },
+                    sessAuthTime,
+                    sessAmr
+                  );
+              });
         }
         else
         {
@@ -1284,9 +1303,16 @@ void SessionController::consent(
         return;
     }
 
-    plugin->getInternalUserId(
-      userId,
-      [plugin,
+    // P0-4: consent approve mints an authorization code and previously
+    // skipped the redirect_uri registration check the deny branch already
+    // had (comment acknowledged it as follow-up), plus the client scope
+    // allowlist. Enforce the same hard boundary login now does.
+    plugin->checkCodeIssuanceGuards(
+      clientId,
+      redirectUri,
+      scope,
+      [req,
+       plugin,
        clientId,
        userId,
        scope,
@@ -1295,10 +1321,45 @@ void SessionController::consent(
        codeChallenge,
        codeChallengeMethod,
        nonce,
-       req,
        sessAuthTime,
        sessAmr,
-       callback = std::move(callback)](std::optional<int32_t> internalUserId) mutable {
+       callback = std::move(callback)](
+        ::OAuth2Plugin::CodeIssuanceGuardResult guard) mutable {
+          if (!guard.ok)
+          {
+              respondError(
+                req, std::move(callback), guard.errorCode, "consent: " + guard.detail
+              );
+              return;
+          }
+          // P2-6(4): malformed code_challenge upfront (matches login).
+          if (!codeChallenge.empty() &&
+              !::fulla::drogon::utils::isValidCodeChallenge(codeChallenge))
+          {
+              respondError(
+                req,
+                std::move(callback),
+                "VALIDATION_FORMAT_ERROR",
+                "consent: code_challenge must be 43-128 characters of [A-Za-z0-9-._~]"
+              );
+              return;
+          }
+
+          plugin->getInternalUserId(
+            userId,
+            [plugin,
+             clientId,
+             userId,
+             scope,
+             redirectUri,
+             state,
+             codeChallenge,
+             codeChallengeMethod,
+             nonce,
+             req,
+             sessAuthTime,
+             sessAmr,
+             callback = std::move(callback)](std::optional<int32_t> internalUserId) mutable {
           if (!internalUserId)
           {
               respondError(
@@ -1450,7 +1511,8 @@ void SessionController::consent(
               );
           }
       }
-    );
+          );
+        });
 }
 
 // #145: forced first-login password change. Unlike PUT /api/me/password

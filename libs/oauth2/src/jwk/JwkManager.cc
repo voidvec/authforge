@@ -240,6 +240,17 @@ bool JwkManager::loadPemInto(KeyEntry &entry, const std::string &pemData)
         EVP_PKEY_free(pkey);
         return false;
     }
+    // P2-3 audit fix: reject weak RSA keys — a 512/1024-bit PEM would
+    // otherwise be accepted for RS256 signing.
+    if (EVP_PKEY_bits(pkey) < 2048)
+    {
+        log(
+          fulla::common::ports::LogLevel::Error,
+          "JwkManager: RSA signing key is shorter than 2048 bits -- refusing to load"
+        );
+        EVP_PKEY_free(pkey);
+        return false;
+    }
 
     entry.pkey = pkey;
     return true;

@@ -56,6 +56,7 @@ class Oauth2Codes
         static const std::string _used;
         static const std::string _auth_time;
         static const std::string _amr;
+        static const std::string _nonce;
     };
 
     static const int primaryKeyNumber;
@@ -211,8 +212,18 @@ class Oauth2Codes
     void setAmr(std::string &&pAmr) noexcept;
     void setAmrToNull() noexcept;
 
+    /**  For column nonce  */
+    ///Get the value of the column nonce, returns the default value if the column is null
+    const std::string &getValueOfNonce() const noexcept;
+    ///Return a shared_ptr object pointing to the column const value, or an empty shared_ptr object if the column is null
+    const std::shared_ptr<std::string> &getNonce() const noexcept;
+    ///Set the value of the column nonce
+    void setNonce(const std::string &pNonce) noexcept;
+    void setNonce(std::string &&pNonce) noexcept;
+    void setNonceToNull() noexcept;
 
-    static size_t getColumnNumber() noexcept {  return 11;  }
+
+    static size_t getColumnNumber() noexcept {  return 12;  }
     static const std::string &getColumnName(size_t index) noexcept(false);
 
     Json::Value toJson() const;
@@ -249,6 +260,7 @@ class Oauth2Codes
     std::shared_ptr<bool> used_;
     std::shared_ptr<int64_t> authTime_;
     std::shared_ptr<std::string> amr_;
+    std::shared_ptr<std::string> nonce_;
     struct MetaData
     {
         const std::string colName_;
@@ -260,7 +272,7 @@ class Oauth2Codes
         const bool notNull_;
     };
     static const std::vector<MetaData> metaData_;
-    bool dirtyFlag_[11]={ false };
+    bool dirtyFlag_[12]={ false };
   public:
     static const std::string &sqlForFindingByPrimaryKey()
     {
@@ -334,6 +346,11 @@ class Oauth2Codes
             sql += "amr,";
             ++parametersCount;
         }
+        if(dirtyFlag_[11])
+        {
+            sql += "nonce,";
+            ++parametersCount;
+        }
         if(parametersCount > 0)
         {
             sql[sql.length()-1]=')';
@@ -400,6 +417,11 @@ class Oauth2Codes
             sql.append(placeholderStr, n);
         }
         if(dirtyFlag_[10])
+        {
+            n = snprintf(placeholderStr,sizeof(placeholderStr),"$%d,",placeholder++);
+            sql.append(placeholderStr, n);
+        }
+        if(dirtyFlag_[11])
         {
             n = snprintf(placeholderStr,sizeof(placeholderStr),"$%d,",placeholder++);
             sql.append(placeholderStr, n);
