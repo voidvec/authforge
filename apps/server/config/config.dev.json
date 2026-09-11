@@ -68,10 +68,6 @@
             "svg",
             "webp"
             ],
-            // P1-15 audit fix: innocuous static assets only. The previous list
-            // included json/yaml/yml, and locations.allow_all=true made Drogon
-            // skip extension checks entirely, so GET /config.json echoed the
-            // DB/Redis credentials in every deployment layout.
 
         "mime": {},
         "locations": [
