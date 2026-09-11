@@ -1,6 +1,6 @@
 // api-diff baseline -- Fulla SDK public header skeletons.
 // Regenerate ONLY via: python tools/api-diff/api_diff.py --update-baseline
-// version: 1.1.0
+// version: 1.1.1
 === libs/common/include/fulla/common/config/ConfigManager.h
 #pragma once
 #include <string>
@@ -2906,6 +2906,19 @@ void validateRedirectUri(
 const std::string &clientId,
 const std::string &redirectUri,
 std::function<void(bool)> &&callback
+);
+struct CodeIssuanceGuardResult
+{
+bool ok = false;
+std::string errorCode;
+std::string detail;
+};
+using CodeIssuanceGuardCallback = std::function<void(CodeIssuanceGuardResult)>;
+void checkCodeIssuanceGuards(
+const std::string &clientId,
+const std::string &redirectUri,
+const std::string &scope,
+CodeIssuanceGuardCallback &&callback
 );
 void generateAuthorizationCode(
 const std::string &clientId,
@@ -7077,6 +7090,7 @@ static const std::string _expires_at;
 static const std::string _used;
 static const std::string _auth_time;
 static const std::string _amr;
+static const std::string _nonce;
 };
 static const int primaryKeyNumber;
 static const std::string tableName;
@@ -7153,6 +7167,11 @@ const std::shared_ptr<std::string> &getAmr() const noexcept;
 void setAmr(const std::string &pAmr) noexcept;
 void setAmr(std::string &&pAmr) noexcept;
 void setAmrToNull() noexcept;
+const std::string &getValueOfNonce() const noexcept;
+const std::shared_ptr<std::string> &getNonce() const noexcept;
+void setNonce(const std::string &pNonce) noexcept;
+void setNonce(std::string &&pNonce) noexcept;
+void setNonceToNull() noexcept;
 static size_t getColumnNumber() noexcept ;
 static const std::string &getColumnName(size_t index) noexcept(false);
 Json::Value toJson() const;
@@ -7187,6 +7206,7 @@ std::shared_ptr<int64_t> expiresAt_;
 std::shared_ptr<bool> used_;
 std::shared_ptr<int64_t> authTime_;
 std::shared_ptr<std::string> amr_;
+std::shared_ptr<std::string> nonce_;
 struct MetaData
 {
 const std::string colName_;
@@ -7198,7 +7218,7 @@ const bool isPrimaryKey_;
 const bool notNull_;
 };
 static const std::vector<MetaData> metaData_;
-bool dirtyFlag_[11]={ false };
+bool dirtyFlag_[12]={ false };
 public:
 static const std::string &sqlForFindingByPrimaryKey()
 ;

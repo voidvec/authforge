@@ -173,6 +173,15 @@ void TokenService::generateAuthorizationCode(
         callback(false, "", "CSPRNG failure");
         return;
     }
+    // Codex review (PR #197): the oauth2_codes.nonce column is VARCHAR(512);
+    // an over-long nonce makes the insert fail, and saveAuthCode's void
+    // callback surfaces that as a dead code at exchange time. Reject here at
+    // the single issuance chokepoint instead.
+    if (nonce.size() > 512)
+    {
+        callback(false, "", "nonce exceeds 512 characters");
+        return;
+    }
     fulla::oauth2::model::OAuth2AuthCode authCode;
     authCode.code = hashToken(*crypto_, code);
     authCode.clientId = clientId;

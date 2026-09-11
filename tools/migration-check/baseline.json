@@ -29,5 +29,6 @@
   "V028__webauthn_purge_unverified_credentials.sql": "4419bb7ea8ad1c54fb759e10d47153087919ba5c3b408dcbd4d3494383aeb970",
   "V029__users_must_change_password.sql": "88bb480064d45eec4eaa7c67d455293ce543c8771c82264a562e7db641fd63a2",
   "V030__backfill_generated_usernames.sql": "361c1d123b1c4bb0f852379e9ca00f8310d2ca94ab1d4c8a0c58c5453ac8cc54",
-  "V031__normalize_user_emails.sql": "9a73f57e63a72d841ee4640e95bef3f954943de042c9400517c1cefd60a8b126"
+  "V031__normalize_user_emails.sql": "9a73f57e63a72d841ee4640e95bef3f954943de042c9400517c1cefd60a8b126",
+  "V032__oauth2_codes_nonce.sql": "39156523359a96153c6088baafb136560b874c208dd070a6d1f4f07f44d0568a"
 }
