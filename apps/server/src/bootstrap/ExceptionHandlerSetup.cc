@@ -31,13 +31,35 @@ void setupExceptionHandler()
 
           // Wrap the callback so CORS headers are injected on whichever response
           // the chosen branch produces (mirrors the prior behavior).
+          // P1-1 audit fix: the origin must pass the SAME strict allowlist
+          // CorsSetup enforces — this path previously echoed any non-empty
+          // Origin with Allow-Credentials, silently bypassing the whitelist
+          // on every unhandled-exception response.
           auto withCors = [req,
                            callback = std::move(callback)](const drogon::HttpResponsePtr &resp) {
               const auto &origin = req->getHeader("Origin");
               if (!origin.empty())
               {
-                  resp->addHeader("Access-Control-Allow-Origin", origin);
-                  resp->addHeader("Access-Control-Allow-Credentials", "true");
+                  bool allowed = false;
+                  const auto &allowOrigins =
+                    drogon::app().getCustomConfig()["cors"]["allow_origins"];
+                  if (allowOrigins.isArray())
+                  {
+                      for (const auto &allowedOrigin : allowOrigins)
+                      {
+                          if (allowedOrigin.asString() == origin)
+                          {
+                              allowed = true;
+                              break;
+                          }
+                      }
+                  }
+                  if (allowed)
+                  {
+                      resp->addHeader("Access-Control-Allow-Origin", origin);
+                      resp->addHeader("Access-Control-Allow-Credentials", "true");
+                      resp->addHeader("Vary", "Origin");
+                  }
               }
               callback(resp);
           };

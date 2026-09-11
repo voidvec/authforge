@@ -567,13 +567,14 @@ void PostgresTokenRepository::introspectToken(
                 introspection.clientId = refreshToken.getValueOfClientId();
                 introspection.tokenType = "Bearer";
                 introspection.exp = expiresAt;
-                introspection.iat = now;
-                // F-016: no hardcoded issuer here anymore; an empty iss lets
-                // the introspect controller backfill from the configured
-                // issuer (keeps iss byte-identical to the discovery document).
+                // P2-7 audit fix: a refresh token has no iat/nbf on its row;
+                // the previous response fabricated iat=now/nbf=now. Omit
+                // both (RFC 7662: claims the server has no knowledge of are
+                // simply absent).
+                introspection.iat = 0;
                 introspection.iss = "";
                 introspection.aud = "";
-                introspection.nbf = now;
+                introspection.nbf = 0;
                 introspection.sub = refreshToken.getValueOfUserId();
                 introspection.scope = refreshToken.getValueOfScope();
                 (*sharedCb)(introspection);
@@ -656,24 +657,38 @@ void PostgresTokenRepository::revokeAccessToken(
             .update(
               updated,
               [sharedCb, now, revokedBy, token, self](const size_t) {
-                  // Also try to revoke in refresh tokens table
+                  // Also terminate the refresh-token FAMILY behind this
+                  // access token. The incoming value is the ACCESS token's
+                  // hash; oauth2_refresh_tokens stores it in the
+                  // access_token column (token holds the RT's own hash), so
+                  // the join must be on _access_token — matching on the
+                  // token column never hits (P0-2 audit fix). Going one step
+                  // further and cascading through family_id closes the
+                  // logout semantics: after a refresh rotation the client's
+                  // current RT belongs to the same family as the (possibly
+                  // stale) AT it presents at logout, and revoking only the
+                  // exact paired row would leave the rotated RT usable for
+                  // up to 30 days (RFC 7009 2.1 permits — and logout
+                  // semantics expect — related-token invalidation).
                   Mapper<Oauth2RefreshTokens> rtMapper(self->dbClientMaster_);
                   rtMapper.findOne(
-                    Criteria(Oauth2RefreshTokens::Cols::_token, CompareOperator::EQ, token),
-                    [sharedCb, now, revokedBy, self](const Oauth2RefreshTokens &rt) {
+                    Criteria(Oauth2RefreshTokens::Cols::_access_token, CompareOperator::EQ, token),
+                    [sharedCb, self](const Oauth2RefreshTokens &rt) {
+                        const auto familyId = rt.getFamilyId();
+                        if (familyId && !familyId->empty())
+                        {
+                            self->revokeTokenFamily(
+                              *familyId, [sharedCb]() { (*sharedCb)(); });
+                            return;
+                        }
+                        // Pre-family rows (no family_id): revoke just the pair.
                         Oauth2RefreshTokens rtUpdated;
                         rtUpdated.setToken(rt.getValueOfToken());
                         rtUpdated.setRevoked(true);
-                        rtUpdated.setRevokedAt(now);
-                        rtUpdated.setRevokedBy(revokedBy);
-
                         Mapper<Oauth2RefreshTokens>(self->dbClientMaster_)
                           .update(
                             rtUpdated,
-                            [sharedCb](const size_t) {
-                                LOG_INFO << "Token revoked successfully (checked both tables)";
-                                (*sharedCb)();
-                            },
+                            [sharedCb](const size_t) { (*sharedCb)(); },
                             [sharedCb](const DrogonDbException &) { (*sharedCb)(); }
                           );
                     },
@@ -694,9 +709,12 @@ void PostgresTokenRepository::revokeAccessToken(
                     .update(
                       simpleUpdate,
                       [sharedCb, token, self](const size_t) {
+                          // P0-2 audit fix: same _access_token join as the
+                          // audited path above (token column never matches
+                          // an access-token hash).
                           Mapper<Oauth2RefreshTokens> rtMapper(self->dbClientMaster_);
                           rtMapper.findOne(
-                            Criteria(Oauth2RefreshTokens::Cols::_token, CompareOperator::EQ, token),
+                            Criteria(Oauth2RefreshTokens::Cols::_access_token, CompareOperator::EQ, token),
                             [sharedCb, self](const Oauth2RefreshTokens &rt) {
                                 Oauth2RefreshTokens rtSimple;
                                 rtSimple.setToken(rt.getValueOfToken());

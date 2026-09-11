@@ -398,6 +398,23 @@ void AuthorizationEndpointController::authorize(
                     codeChallengeMethod = "plain";
                 }
 
+                // P2-6(4) audit fix: reject a malformed code_challenge
+                // upfront (RFC 7636 4.2: 43-128 chars of [A-Za-z0-9-._~]).
+                // An over-long value would otherwise overflow the
+                // VARCHAR(128) column and surface as a dead code at
+                // exchange time.
+                if (!codeChallenge.empty() &&
+                    !fulla::drogon::utils::isValidCodeChallenge(codeChallenge))
+                {
+                    callback(buildAuthorizeErrorRedirect(
+                      redirectUri,
+                      "invalid_request",
+                      "code_challenge must be 43-128 characters of [A-Za-z0-9-._~]",
+                      state
+                    ));
+                    return;
+                }
+
                 std::vector<std::string> requestedScopes;
                 std::stringstream ss(scope);
                 std::string scopeItem;

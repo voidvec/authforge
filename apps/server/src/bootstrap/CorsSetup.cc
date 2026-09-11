@@ -39,6 +39,10 @@ void setupCors()
               {
                   auto resp = drogon::HttpResponse::newHttpResponse();
                   resp->addHeader("Access-Control-Allow-Origin", origin);
+                  // P2-10: dynamic Origin reflection must carry Vary so a
+                  // shared cache cannot serve one origin's CORS response to
+                  // another.
+                  resp->addHeader("Vary", "Origin");
 
                   const auto &requestMethod = req->getHeader("Access-Control-Request-Method");
                   if (!requestMethod.empty())
@@ -74,6 +78,8 @@ void setupCors()
               resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
               resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
               resp->addHeader("Access-Control-Allow-Credentials", "true");
+              // P2-10: see the preflight branch above.
+              resp->addHeader("Vary", "Origin");
           }
       }
     );

@@ -164,6 +164,28 @@ class OAuth2Plugin : public drogon::Plugin<OAuth2Plugin>
       std::function<void(bool)> &&callback
     );
 
+    // P0-4 audit fix: hard authorization boundary shared by EVERY code
+    // issuance path (login, consent approve, MFA verify, authorize silent
+    // re-auth). Previously only /oauth2/authorize enforced these, so the
+    // other paths minted codes for unknown clients, unregistered
+    // redirect_uris (open redirect on success) and scopes outside the
+    // client's allowlist. errorCode is an ErrorCatalog code (empty when the
+    // guard passes); device_code-style protocol endpoints map it to an
+    // OAuth2 error themselves.
+    struct CodeIssuanceGuardResult
+    {
+        bool ok = false;
+        std::string errorCode;
+        std::string detail;
+    };
+    using CodeIssuanceGuardCallback = std::function<void(CodeIssuanceGuardResult)>;
+    void checkCodeIssuanceGuards(
+      const std::string &clientId,
+      const std::string &redirectUri,
+      const std::string &scope,
+      CodeIssuanceGuardCallback &&callback
+    );
+
     /**
      * @brief Generate Authorization Code (Async)
      * @param clientId Client identifier

@@ -57,16 +57,29 @@
         ],
         "upload_path": "uploads",
         "file_types": [
-            "gif", "png", "jpg", "js", "css", "html", "ico", "swf",
-            "xap", "apk", "cur", "xml", "webp", "svg", "yaml", "yml", "json"
-        ],
+            "gif",
+            "png",
+            "jpg",
+            "jpeg",
+            "js",
+            "css",
+            "html",
+            "ico",
+            "svg",
+            "webp"
+            ],
+            // P1-15 audit fix: innocuous static assets only. The previous list
+            // included json/yaml/yml, and locations.allow_all=true made Drogon
+            // skip extension checks entirely, so GET /config.json echoed the
+            // DB/Redis credentials in every deployment layout.
+
         "mime": {},
         "locations": [
             {
                 "default_content_type": "text/plain",
                 "alias": "",
                 "is_case_sensitive": true,
-                "allow_all": true,
+                "allow_all": false,
                 "is_recursive": true,
                 "filters": []
             }

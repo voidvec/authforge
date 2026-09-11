@@ -253,91 +253,73 @@ void PasswordResetService::confirmReset(
 
                 Mapper<Users>(db).update(
                   updated,
-                  [sharedCb, req, db, userId](const size_t) {
+                  [sharedCb, req, db, userId, publicSub = user.getValueOfPublicSub()](
+                    const size_t) {
                       std::string userIdStr = std::to_string(userId);
 
+                      // P0-3 audit fix: token rows carry the subject in the
+                      // shape the issuing path used (login/MFA/social store
+                      // the public_sub UUID; authorize silent re-auth and
+                      // consent store the internal id). Revoke under BOTH
+                      // keys, like deleteAccount does — the previous
+                      // internal-id-only predicate missed every
+                      // public-sub-keyed token while the response claimed
+                      // all sessions had been revoked.
                       // Bulk token revocation: documented raw-SQL exemptions
-                      // (db-operations.md — documented batch operations)
+                      // (db-operations.md — documented batch operations).
+                      auto respond = [sharedCb, req, userId]() {
+                          ::fulla::drogon::adapters::DrogonAuditSink::logFromRequest(
+                            ::drogon::app().getPlugin<::OAuth2Plugin>()->getAuditSink(),
+                            "password_reset",
+                            "success",
+                            req,
+                            std::to_string(userId),
+                            "user",
+                            std::to_string(userId)
+                          );
+                          Json::Value json;
+                          json["message"] = "Password reset successful";
+                          json["note"] = "All existing sessions have been revoked";
+                          auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
+                          (*sharedCb)(resp);
+                      };
+                      // P2-11: also consume any OTHER outstanding reset
+                      // tokens for this user — an intercepted second link
+                      // must not survive the password it was minted for.
+                      auto invalidateOtherResetTokens = [db, userId, respond]() {
+                          db->execSqlAsync(
+                            "UPDATE password_reset_tokens SET used = true "
+                            "WHERE user_id = $1 AND used = false",
+                            [respond](const ::drogon::orm::Result &) { respond(); },
+                            [respond](const ::drogon::orm::DrogonDbException &) { respond(); },
+                            userId
+                          );
+                      };
+                      auto revokeRefreshTokens = [sharedCb, req, db, userId, userIdStr, publicSub,
+                                                  invalidateOtherResetTokens]() {
+                          db->execSqlAsync(
+                            "UPDATE oauth2_refresh_tokens SET revoked = true "
+                            "WHERE user_id = $1 OR user_id = $2",
+                            [invalidateOtherResetTokens](const ::drogon::orm::Result &) {
+                                invalidateOtherResetTokens();
+                            },
+                            [invalidateOtherResetTokens](const ::drogon::orm::DrogonDbException &) {
+                                invalidateOtherResetTokens();
+                            },
+                            publicSub,
+                            userIdStr
+                          );
+                      };
                       db->execSqlAsync(
                         "UPDATE oauth2_access_tokens SET revoked = true "
-                        "WHERE user_id = $1",
-                        [sharedCb, req, db, userId, userIdStr](const ::drogon::orm::Result &) {
-                            db->execSqlAsync(
-                              "UPDATE oauth2_refresh_tokens SET revoked = true "
-                              "WHERE user_id = $1",
-                              [sharedCb, req, userId](const ::drogon::orm::Result &) {
-                                  ::fulla::drogon::adapters::DrogonAuditSink::logFromRequest(
-                                    ::drogon::app().getPlugin<::OAuth2Plugin>()->getAuditSink(),
-                                    "password_reset",
-                                    "success",
-                                    req,
-                                    std::to_string(userId),
-                                    "user",
-                                    std::to_string(userId)
-                                  );
-                                  Json::Value json;
-                                  json["message"] = "Password reset successful";
-                                  json["note"] = "All existing sessions have been revoked";
-                                  auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
-                                  (*sharedCb)(resp);
-                              },
-                              [sharedCb, req, userId](const ::drogon::orm::DrogonDbException &) {
-                                  ::fulla::drogon::adapters::DrogonAuditSink::logFromRequest(
-                                    ::drogon::app().getPlugin<::OAuth2Plugin>()->getAuditSink(),
-                                    "password_reset",
-                                    "success",
-                                    req,
-                                    std::to_string(userId),
-                                    "user",
-                                    std::to_string(userId)
-                                  );
-                                  Json::Value json;
-                                  json["message"] = "Password reset successful";
-                                  auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
-                                  (*sharedCb)(resp);
-                              },
-                              userIdStr
-                            );
+                        "WHERE user_id = $1 OR user_id = $2",
+                        [revokeRefreshTokens](const ::drogon::orm::Result &) {
+                            revokeRefreshTokens();
                         },
-                        [sharedCb, req, db, userId, userIdStr](
-                          const ::drogon::orm::DrogonDbException &
-                        ) {
-                            db->execSqlAsync(
-                              "UPDATE oauth2_refresh_tokens SET revoked = true "
-                              "WHERE user_id = $1",
-                              [sharedCb, req, userId](const ::drogon::orm::Result &) {
-                                  ::fulla::drogon::adapters::DrogonAuditSink::logFromRequest(
-                                    ::drogon::app().getPlugin<::OAuth2Plugin>()->getAuditSink(),
-                                    "password_reset",
-                                    "success",
-                                    req,
-                                    std::to_string(userId),
-                                    "user",
-                                    std::to_string(userId)
-                                  );
-                                  Json::Value json;
-                                  json["message"] = "Password reset successful";
-                                  auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
-                                  (*sharedCb)(resp);
-                              },
-                              [sharedCb, req, userId](const ::drogon::orm::DrogonDbException &) {
-                                  ::fulla::drogon::adapters::DrogonAuditSink::logFromRequest(
-                                    ::drogon::app().getPlugin<::OAuth2Plugin>()->getAuditSink(),
-                                    "password_reset",
-                                    "success",
-                                    req,
-                                    std::to_string(userId),
-                                    "user",
-                                    std::to_string(userId)
-                                  );
-                                  Json::Value json;
-                                  json["message"] = "Password reset successful";
-                                  auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
-                                  (*sharedCb)(resp);
-                              },
-                              userIdStr
-                            );
+                        [revokeRefreshTokens](const ::drogon::orm::DrogonDbException &) {
+                            revokeRefreshTokens();
                         },
+                        publicSub,
                         userIdStr
                       );
                   },

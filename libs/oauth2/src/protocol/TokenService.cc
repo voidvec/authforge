@@ -166,6 +166,13 @@ void TokenService::generateAuthorizationCode(
     }
 
     auto code = generateSecureToken(*crypto_);
+    // P2-1: "" means the CSPRNG failed — refuse issuance instead of
+    // persisting/handing out a deterministic value.
+    if (code.empty())
+    {
+        callback(false, "", "CSPRNG failure");
+        return;
+    }
     fulla::oauth2::model::OAuth2AuthCode authCode;
     authCode.code = hashToken(*crypto_, code);
     authCode.clientId = clientId;
@@ -230,7 +237,9 @@ void TokenService::exchangeCodeForToken(
                 }
                 if (authCodeOpt->clientId != clientId)
                 {
-                    callback(makeError("invalid_client", "Client ID mismatch"));
+                    // P2-6(1): RFC 6749 5.2 — a code issued to another
+                    // client is invalid_grant, not invalid_client.
+                    callback(makeError("invalid_grant", "Authorization code was issued to another client"));
                     return;
                 }
 
@@ -270,6 +279,17 @@ void TokenService::exchangeCodeForToken(
                           rolesJson.append(r);
 
                       auto tokenStr = generateSecureToken(*self->crypto_);
+                      auto refreshTokenStr = generateSecureToken(*self->crypto_);
+                      auto familyId = generateSecureToken(*self->crypto_, 16);
+                      // P2-1: refuse issuance on CSPRNG failure ("" results).
+                      if (tokenStr.empty() || refreshTokenStr.empty() || familyId.empty())
+                      {
+                          self->audit(
+                            "token_issued", "failure", authCode.userId, "token", ""
+                          );
+                          callback(makeError("server_error", "Token generation failed"));
+                          return;
+                      }
                       fulla::oauth2::model::OAuth2AccessToken token;
                       token.token = hashToken(*self->crypto_, tokenStr);
                       token.clientId = authCode.clientId;
@@ -286,8 +306,6 @@ void TokenService::exchangeCodeForToken(
                       // default leaked a hardcoded example.com URL).
                       token.issuer = self->issuer_;
 
-                      auto refreshTokenStr = generateSecureToken(*self->crypto_);
-                      auto familyId = generateSecureToken(*self->crypto_, 16);
                       fulla::oauth2::model::OAuth2RefreshToken refreshToken;
                       refreshToken.token = hashToken(*self->crypto_, refreshTokenStr);
                       refreshToken.accessToken = token.token;
@@ -479,6 +497,13 @@ void TokenService::refreshAccessToken(
           }
 
           auto newTokenStr = generateSecureToken(*self->crypto_);
+          auto newRefreshTokenStr = generateSecureToken(*self->crypto_);
+          // P2-1: refuse issuance on CSPRNG failure ("" results).
+          if (newTokenStr.empty() || newRefreshTokenStr.empty())
+          {
+              callback(makeError("server_error", "Token generation failed"));
+              return;
+          }
           fulla::oauth2::model::OAuth2AccessToken token;
           token.token = hashToken(*self->crypto_, newTokenStr);
           token.clientId = storedRt->clientId;
@@ -490,7 +515,6 @@ void TokenService::refreshAccessToken(
           // F-016: same issuer stamping as the authorization_code path above.
           token.issuer = self->issuer_;
 
-          auto newRefreshTokenStr = generateSecureToken(*self->crypto_);
           fulla::oauth2::model::OAuth2RefreshToken newRt;
           newRt.token = hashToken(*self->crypto_, newRefreshTokenStr);
           newRt.accessToken = token.token;

@@ -244,6 +244,24 @@ void DeviceAuthController::deviceAuthorization(
               return;
           }
 
+          // P0-4 audit fix: enforce the client's registered scope allowlist.
+          // The device_code row previously stored whatever scope string the
+          // request carried; the admin approval step gates who may approve,
+          // not what scope the device ends up with (RFC 6749 3.3).
+          if (!scope.empty())
+          {
+              fulla::oauth2::model::Client aggregate(*client);
+              if (!aggregate.allowsAllScopes(scope))
+              {
+                  ::fulla::common::error::OAuth2ErrorHandler::sendErrorResponse(
+                    std::move(*sharedCb),
+                    "invalid_scope",
+                    "Requested scope exceeds the scopes registered for this client"
+                  );
+                  return;
+              }
+          }
+
           auto proceedDeviceAuth = [clientId, scope, sharedCb]() {
               deviceAuthorizationInner(clientId, scope, sharedCb);
           };

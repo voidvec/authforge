@@ -100,15 +100,15 @@ void AuthorizationFilter::doFilter(
     // (not shared_ptr) to manage Filter instances.
 
     // 1. Extract Token
+    // P1-8 audit fix: Bearer header ONLY. The previous fallback to an
+    // access_token query/form parameter (RFC 6750 2.3, forbidden by RFC 9700)
+    // leaked tokens into access logs, proxies and Referer headers on every
+    // /api/admin/* request. OAuth2AuthFilter already accepts the header only.
     std::string token;
     auto authHeader = req->getHeader("Authorization");
     if (!authHeader.empty() && authHeader.find("Bearer ") == 0)
     {
         token = authHeader.substr(7);
-    }
-    else
-    {
-        token = req->getParameter("access_token");
     }
 
     if (token.empty())
