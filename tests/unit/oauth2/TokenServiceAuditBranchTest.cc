@@ -147,7 +147,7 @@ bool writeWeakKey(const std::filesystem::path &dir, const std::string &kid, int 
 
 }  // namespace
 
-DROGON_TEST(Unit_OAuth2_TokenCrypto_CsprngFailure_ReturnsEmpty)
+DROGON_TEST(Unit_P2_Oauth2_TokenCrypto_CsprngFailure_ReturnsEmpty)
 {
     FlakyCrypto crypto(0);  // every secureRandomBytes call fails
     CHECK(fulla::oauth2::protocol::generateSecureToken(crypto).empty());
@@ -156,7 +156,7 @@ DROGON_TEST(Unit_OAuth2_TokenCrypto_CsprngFailure_ReturnsEmpty)
     CHECK(!fulla::oauth2::protocol::generateSecureToken(healthy).empty());
 }
 
-DROGON_TEST(Unit_OAuth2_GenerateCode_CsprngFailure_Rejected)
+DROGON_TEST(Unit_P2_Oauth2_GenerateCode_CsprngFailure_Rejected)
 {
     fulla::storage::memory::MemoryRepositoryBundle bundle;
     auto svc = makeService(std::make_shared<FlakyCrypto>(0), bundle);
@@ -169,7 +169,7 @@ DROGON_TEST(Unit_OAuth2_GenerateCode_CsprngFailure_Rejected)
       });
 }
 
-DROGON_TEST(Unit_OAuth2_GenerateCode_OverlongNonce_Rejected)
+DROGON_TEST(Unit_P0_Oauth2_GenerateCode_OverlongNonce_Rejected)
 {
     fulla::storage::memory::MemoryRepositoryBundle bundle;
     auto crypto = std::make_shared<FlakyCrypto>(-1);
@@ -199,7 +199,7 @@ DROGON_TEST(Unit_OAuth2_GenerateCode_OverlongNonce_Rejected)
       });
 }
 
-DROGON_TEST(Unit_OAuth2_ExchangeCode_CsprngFailure_ServerError)
+DROGON_TEST(Unit_P2_Oauth2_ExchangeCode_CsprngFailure_ServerError)
 {
     fulla::storage::memory::MemoryRepositoryBundle bundle;
     // Call #1 mints the code; the exchange then needs three draws
@@ -218,7 +218,7 @@ DROGON_TEST(Unit_OAuth2_ExchangeCode_CsprngFailure_ServerError)
     });
 }
 
-DROGON_TEST(Unit_OAuth2_JwkManager_RejectsSub2048RsaKey)
+DROGON_TEST(Unit_P2_Oauth2_JwkManager_RejectsSub2048RsaKey)
 {
     const auto dir =
       std::filesystem::temp_directory_path() / (std::string("fulla_jwk_weak_") + std::to_string(
@@ -235,7 +235,7 @@ DROGON_TEST(Unit_OAuth2_JwkManager_RejectsSub2048RsaKey)
     std::filesystem::remove_all(dir);
 }
 
-DROGON_TEST(Unit_OAuth2_JwkManager_Accepts2048RsaKey)
+DROGON_TEST(Unit_P2_Oauth2_JwkManager_Accepts2048RsaKey)
 {
     const auto dir =
       std::filesystem::temp_directory_path() / (std::string("fulla_jwk_ok_") + std::to_string(
