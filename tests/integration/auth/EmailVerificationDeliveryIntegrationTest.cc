@@ -163,6 +163,16 @@ void mintVerificationToken(const std::string &email, const std::string &rawToken
       email);
     fut.get();
 }
+
+// Leave-no-trace: later ctest entries share this database, and stray rows
+// shift their branching (the coverage ratchet is sensitive to exactly that).
+// Deleting the user cascades to tokens/roles/mappings (ON DELETE CASCADE).
+void deleteUserByEmail(const std::string &email)
+{
+    auto db = app().getDbClient();
+    auto fut = db->execSqlAsyncFuture("DELETE FROM users WHERE email = $1", email);
+    fut.get();
+}
 }  // namespace
 
 DROGON_TEST(Integration_P1_EmailVerification_RegistrationSendsVerificationEmail)
@@ -184,7 +194,7 @@ DROGON_TEST(Integration_P1_EmailVerification_RegistrationSendsVerificationEmail)
     CHECK(registerUser(username, "EvReg9-Password!", email));
     // Issue #198 core behavior: registration with an email creates a
     // verification token without any authenticated follow-up.
-    CHECK(waitForTokenCount(email, 1));
+    CHECK(waitForTokenCount(email, 1));    deleteUserByEmail(email);
 }
 
 DROGON_TEST(Integration_P1_EmailVerification_ResendByEmail_Unauthenticated)
@@ -220,7 +230,7 @@ DROGON_TEST(Integration_P1_EmailVerification_ResendByEmail_Unauthenticated)
           std::string::npos);
 
     // A second token row was created for the same user.
-    CHECK(waitForTokenCount(email, 2));
+    CHECK(waitForTokenCount(email, 2));    deleteUserByEmail(email);
 }
 
 DROGON_TEST(Integration_P1_EmailVerification_ResendByEmail_UnknownEmail_AntiEnumeration)
@@ -289,5 +299,5 @@ DROGON_TEST(Integration_P1_EmailVerification_VerifyTokenFlipsEmailVerified)
     // Token consumption is one-shot: replaying must fail.
     auto replay = sendReq(req);
     REQUIRE(replay != nullptr);
-    CHECK(replay->getStatusCode() == k400BadRequest);
+    CHECK(replay->getStatusCode() == k400BadRequest);    deleteUserByEmail(email);
 }
