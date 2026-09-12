@@ -22,6 +22,11 @@ class EmailVerificationController
       ::drogon::Post,
       "fulla::drogon::filters::OAuth2AuthFilter"
     );
+    // Issue #198: unverified self-registered users hold no token, so the
+    // Bearer-gated /resend above is unreachable for exactly the users who
+    // need it. This variant identifies the account by email address and is
+    // rate-limited inside the service.
+    ADD_METHOD_TO(EmailVerificationController::resendByEmail, "/api/verify-email/resend-by-email", ::drogon::Post);
     METHOD_LIST_END
 
     // Task B5: business logic moved to
@@ -33,6 +38,11 @@ class EmailVerificationController
     );
 
     void resend(
+      const ::drogon::HttpRequestPtr &req,
+      std::function<void(const ::drogon::HttpResponsePtr &)> &&callback
+    );
+
+    void resendByEmail(
       const ::drogon::HttpRequestPtr &req,
       std::function<void(const ::drogon::HttpResponsePtr &)> &&callback
     );

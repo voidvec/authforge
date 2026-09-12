@@ -30,6 +30,21 @@ struct EmailVerificationControllerDocs
         resendEmail.tags = {"User Verification"};
         resendEmail.requiresAuth = false;
         ::fulla::drogon::observability::openapi::OpenApiGenerator::addEndpoint(resendEmail);
+
+        ::fulla::drogon::observability::openapi::EndpointInfo resendByEmail;
+        resendByEmail.path = "/api/verify-email/resend-by-email";
+        resendByEmail.method = "POST";
+        resendByEmail.summary = "Resend Verification Email (by email address)";
+        resendByEmail.description =
+          "Resend the email verification link, identifying the account by "
+          "email address. Unauthenticated (issue #198): a self-registered "
+          "user holds no token yet, so the Bearer-gated /resend is "
+          "unreachable for them. Rate-limited per (ip, email); the response "
+          "is identical for unknown, already-verified, and emailed "
+          "addresses (anti-enumeration).";
+        resendByEmail.tags = {"User Verification"};
+        resendByEmail.requiresAuth = false;
+        ::fulla::drogon::observability::openapi::OpenApiGenerator::addEndpoint(resendByEmail);
     }
 };
 
@@ -62,6 +77,16 @@ void EmailVerificationController::resend(
     auto sharedCb =
       std::make_shared<std::function<void(const ::drogon::HttpResponsePtr &)>>(std::move(callback));
     services::EmailVerificationService::resendVerification(req, sharedCb);
+}
+
+void EmailVerificationController::resendByEmail(
+  const ::drogon::HttpRequestPtr &req,
+  std::function<void(const ::drogon::HttpResponsePtr &)> &&callback
+)
+{
+    auto sharedCb =
+      std::make_shared<std::function<void(const ::drogon::HttpResponsePtr &)>>(std::move(callback));
+    services::EmailVerificationService::requestVerificationByEmail(req, sharedCb);
 }
 
 }  // namespace fulla::drogon::controllers

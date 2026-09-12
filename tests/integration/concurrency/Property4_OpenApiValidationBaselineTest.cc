@@ -169,6 +169,7 @@ const std::string &expectedFingerprint()
       "POST /api/password-reset/request\n"
       "POST /api/register\n"
       "POST /api/verify-email/resend\n"
+      "POST /api/verify-email/resend-by-email\n"
       "POST /api/wechat/login\n"
       "POST /oauth2/consent\n"
       "POST /oauth2/device/approve\n"

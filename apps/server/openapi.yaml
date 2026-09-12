@@ -2602,6 +2602,30 @@ paths:
       summary: Resend Verification Email
       tags:
       - User Verification
+  /api/verify-email/resend-by-email:
+    post:
+      description: "Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration)."
+      operationId: post_api_verify-email_resend-by-email
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                email:
+                  type: string
+              required:
+              - email
+              type: object
+      responses:
+        '200':
+          description: Verification email sent if the email exists and is unverified
+        '400':
+          description: Invalid request
+        '429':
+          description: Rate limited
+      summary: Resend Verification Email (by email address)
+      tags:
+      - User Verification
   /api/wechat/login:
     post:
       description: Exchange WeChat authorization code for user information. This endpoint

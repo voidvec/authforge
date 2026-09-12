@@ -1535,12 +1535,17 @@ EmailVerificationController::resend,
 ::drogon::Post,
 "fulla::drogon::filters::OAuth2AuthFilter"
 );
+ADD_METHOD_TO(EmailVerificationController::resendByEmail, "/api/verify-email/resend-by-email", ::drogon::Post);
 METHOD_LIST_END
 void verify(
 const ::drogon::HttpRequestPtr &req,
 std::function<void(const ::drogon::HttpResponsePtr &)> &&callback
 );
 void resend(
+const ::drogon::HttpRequestPtr &req,
+std::function<void(const ::drogon::HttpResponsePtr &)> &&callback
+);
+void resendByEmail(
 const ::drogon::HttpRequestPtr &req,
 std::function<void(const ::drogon::HttpResponsePtr &)> &&callback
 );
@@ -3132,6 +3137,9 @@ using ResponseCallback =
 std::shared_ptr<std::function<void(const ::drogon::HttpResponsePtr &)>>;
 static void resendVerification(const ::drogon::HttpRequestPtr &req, ResponseCallback cb);
 static void verifyToken(const ::drogon::HttpRequestPtr &req, ResponseCallback cb);
+static void requestVerificationByEmail(
+const ::drogon::HttpRequestPtr &req, ResponseCallback cb);
+static void notifyNewRegistration(const std::string &email);
 private:
 static void sendVerificationEmail(int internalUserId, const std::string &email);
 };

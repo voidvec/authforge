@@ -9,6 +9,7 @@
 
 #include <fulla/drogon/AuthService.h>
 #include <fulla/drogon/controllers/EmailVerificationController.h>
+#include <fulla/drogon/services/EmailVerificationService.h>
 #include <drogon/drogon.h>
 #include <drogon/HttpClient.h>
 #include <fulla/drogon/plugin/OAuth2Plugin.h>
@@ -2235,6 +2236,14 @@ void SessionController::registerUser(
     auto onRegistered = [callback, email, req](const std::string &errorCode) {
         if (errorCode.empty())
         {
+            // Issue #198: deliver the verification email right away. Without
+            // this the unverified user holds no credential, so the
+            // Bearer-gated /api/verify-email/resend is unreachable for them
+            // and (with auth.require_email_verification on) they can never
+            // log in. Fire-and-forget: registration must not depend on
+            // email delivery.
+            if (!email.empty())
+                services::EmailVerificationService::notifyNewRegistration(email);
             Json::Value json;
             json["message"] = "User registered successfully";
             if (!email.empty())

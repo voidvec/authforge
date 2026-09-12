@@ -1784,6 +1784,20 @@
         ]
       }
     },
+    "/api/verify-email/resend-by-email" : 
+    {
+      "post" : 
+      {
+        "description" : "Resend the email verification link, identifying the account by email address. Unauthenticated (issue #198): a self-registered user holds no token yet, so the Bearer-gated /resend is unreachable for them. Rate-limited per (ip, email); the response is identical for unknown, already-verified, and emailed addresses (anti-enumeration).",
+        "operationId" : "post_api_verify-email_resend-by-email",
+        "responses" : null,
+        "summary" : "Resend Verification Email (by email address)",
+        "tags" : 
+        [
+          "User Verification"
+        ]
+      }
+    },
     "/api/wechat/login" : 
     {
       "post" : 
