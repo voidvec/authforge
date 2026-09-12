@@ -165,6 +165,14 @@
                     },
                     {
                         "urls": [
+                            "^/api/verify-email/resend-by-email"
+                        ],
+                        "capacity": 5000,
+                        "ip_capacity": 3,
+                        "user_capacity": 2
+                    },
+                    {
+                        "urls": [
                             "^/oauth2/token"
                         ],
                         "capacity": 10000,

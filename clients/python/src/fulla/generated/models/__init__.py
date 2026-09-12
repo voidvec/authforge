@@ -52,6 +52,7 @@ from .post_api_me_social_links_provider_authorize_provider import PostApiMeSocia
 from .post_api_me_social_links_provider_authorize_response_200 import PostApiMeSocialLinksProviderAuthorizeResponse200
 from .post_api_me_social_links_provider_body import PostApiMeSocialLinksProviderBody
 from .post_api_me_social_links_provider_provider import PostApiMeSocialLinksProviderProvider
+from .post_api_verify_email_resend_by_email_body import PostApiVerifyEmailResendByEmailBody
 from .post_oauth_2_consent_action import PostOauth2ConsentAction
 from .post_oauth_2_device_approve_body import PostOauth2DeviceApproveBody
 from .post_oauth_2_device_approve_response_200 import PostOauth2DeviceApproveResponse200
@@ -132,6 +133,7 @@ __all__ = (
     "PostApiMeSocialLinksProviderAuthorizeResponse200",
     "PostApiMeSocialLinksProviderBody",
     "PostApiMeSocialLinksProviderProvider",
+    "PostApiVerifyEmailResendByEmailBody",
     "PostOauth2ConsentAction",
     "PostOauth2DeviceApproveBody",
     "PostOauth2DeviceApproveResponse200",

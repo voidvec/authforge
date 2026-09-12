@@ -67,6 +67,7 @@ POST /api/password-reset/confirm
 POST /api/password-reset/request
 POST /api/register
 POST /api/verify-email/resend
+POST /api/verify-email/resend-by-email
 POST /api/wechat/login
 POST /oauth2/consent
 POST /oauth2/device/approve

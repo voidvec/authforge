@@ -37,6 +37,23 @@ class EmailVerificationService
     // ---- GET /api/verify-email?token=xxx ----
     static void verifyToken(const ::drogon::HttpRequestPtr &req, ResponseCallback cb);
 
+    // ---- POST /api/verify-email/resend-by-email (unauthenticated) ----
+    // Issue #198: a self-registered user has no credential yet, so the
+    // Bearer-gated /resend is unreachable for exactly the users who need it.
+    // This variant identifies the account by email address instead, applies
+    // a per-(ip, email) request-rate limit, and answers with an identical
+    // generic response for every outcome (anti-enumeration).
+    static void requestVerificationByEmail(
+      const ::drogon::HttpRequestPtr &req, ResponseCallback cb);
+
+    // ---- registration hook (fire-and-forget) ----
+    // Resolves the freshly registered account by email and delivers the
+    // verification email. Called from the register flow right after the
+    // user row is created; without it an unverified user could never obtain
+    // a token (issue #198). Silent no-op when the email is empty or the
+    // lookup fails (failures are logged, never surfaced to the caller).
+    static void notifyNewRegistration(const std::string &email);
+
   private:
     /// Utility: generate a token, hash it, INSERT into
     /// email_verification_tokens, and send the verification email.

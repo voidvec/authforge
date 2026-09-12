@@ -837,6 +837,11 @@ type PostApiRegisterParams struct {
 	Email *string `form:"email,omitempty" json:"email,omitempty"`
 }
 
+// PostApiVerifyEmailResendByEmailJSONBody defines parameters for PostApiVerifyEmailResendByEmail.
+type PostApiVerifyEmailResendByEmailJSONBody struct {
+	Email string `json:"email"`
+}
+
 // PostApiWechatLoginParams defines parameters for PostApiWechatLogin.
 type PostApiWechatLoginParams struct {
 	// Code Authorization code from WeChat OAuth2 callback (required)
@@ -1045,6 +1050,9 @@ type PostApiMeSocialLinksProviderJSONRequestBody PostApiMeSocialLinksProviderJSO
 
 // PostApiMeWebauthnRegisterFinishJSONRequestBody defines body for PostApiMeWebauthnRegisterFinish for application/json ContentType.
 type PostApiMeWebauthnRegisterFinishJSONRequestBody = WebAuthnRegistrationCredential
+
+// PostApiVerifyEmailResendByEmailJSONRequestBody defines body for PostApiVerifyEmailResendByEmail for application/json ContentType.
+type PostApiVerifyEmailResendByEmailJSONRequestBody PostApiVerifyEmailResendByEmailJSONBody
 
 // PostOauth2DeviceApproveFormdataRequestBody defines body for PostOauth2DeviceApprove for application/x-www-form-urlencoded ContentType.
 type PostOauth2DeviceApproveFormdataRequestBody PostOauth2DeviceApproveFormdataBody
@@ -1851,6 +1859,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/verify-email/resend (the `PostApiVerifyEmailResend` operationId).
 	PostApiVerifyEmailResend(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostApiVerifyEmailResendByEmailWithBody Resend Verification Email (by email address)
+	//
+	// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+	PostApiVerifyEmailResendByEmailWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostApiVerifyEmailResendByEmail Resend Verification Email (by email address)
+	//
+	// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+	PostApiVerifyEmailResendByEmail(ctx context.Context, body PostApiVerifyEmailResendByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostApiWechatLogin WeChat OAuth2 Login
 	//
@@ -3506,6 +3532,44 @@ func (c *Client) GetApiVerifyEmail(ctx context.Context, reqEditors ...RequestEdi
 // Corresponds with POST /api/verify-email/resend (the `PostApiVerifyEmailResend` operationId).
 func (c *Client) PostApiVerifyEmailResend(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostApiVerifyEmailResendRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostApiVerifyEmailResendByEmailWithBody Resend Verification Email (by email address)
+//
+// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+func (c *Client) PostApiVerifyEmailResendByEmailWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostApiVerifyEmailResendByEmailRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostApiVerifyEmailResendByEmail Resend Verification Email (by email address)
+//
+// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+func (c *Client) PostApiVerifyEmailResendByEmail(ctx context.Context, body PostApiVerifyEmailResendByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostApiVerifyEmailResendByEmailRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6326,6 +6390,46 @@ func NewPostApiVerifyEmailResendRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewPostApiVerifyEmailResendByEmailRequest calls the generic PostApiVerifyEmailResendByEmail builder with application/json body
+func NewPostApiVerifyEmailResendByEmailRequest(server string, body PostApiVerifyEmailResendByEmailJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostApiVerifyEmailResendByEmailRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostApiVerifyEmailResendByEmailRequestWithBody constructs an http.Request for the PostApiVerifyEmailResendByEmail method, with any body, and a specified content type
+func NewPostApiVerifyEmailResendByEmailRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/verify-email/resend-by-email")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPostApiWechatLoginRequest constructs an http.Request for the PostApiWechatLogin method
 func NewPostApiWechatLoginRequest(server string, params *PostApiWechatLoginParams) (*http.Request, error) {
 	var err error
@@ -8137,6 +8241,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/verify-email/resend (the `PostApiVerifyEmailResend` operationId).
 	PostApiVerifyEmailResendWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PostApiVerifyEmailResendResponse, error)
+
+	// PostApiVerifyEmailResendByEmailWithBodyWithResponse Resend Verification Email (by email address)
+	//
+	// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+	PostApiVerifyEmailResendByEmailWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostApiVerifyEmailResendByEmailResponse, error)
+
+	// PostApiVerifyEmailResendByEmailWithResponse Resend Verification Email (by email address)
+	//
+	// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+	PostApiVerifyEmailResendByEmailWithResponse(ctx context.Context, body PostApiVerifyEmailResendByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*PostApiVerifyEmailResendByEmailResponse, error)
 
 	// PostApiWechatLoginWithResponse WeChat OAuth2 Login
 	//
@@ -11024,6 +11146,40 @@ func (r PostApiVerifyEmailResendResponse) ContentType() string {
 	return ""
 }
 
+type PostApiVerifyEmailResendByEmailResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r PostApiVerifyEmailResendByEmailResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostApiVerifyEmailResendByEmailResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostApiVerifyEmailResendByEmailResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostApiVerifyEmailResendByEmailResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PostApiWechatLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13311,6 +13467,36 @@ func (c *ClientWithResponses) PostApiVerifyEmailResendWithResponse(ctx context.C
 	return ParsePostApiVerifyEmailResendResponse(rsp)
 }
 
+// PostApiVerifyEmailResendByEmailWithBodyWithResponse Resend Verification Email (by email address)
+//
+// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+func (c *ClientWithResponses) PostApiVerifyEmailResendByEmailWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostApiVerifyEmailResendByEmailResponse, error) {
+	rsp, err := c.PostApiVerifyEmailResendByEmailWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostApiVerifyEmailResendByEmailResponse(rsp)
+}
+
+// PostApiVerifyEmailResendByEmailWithResponse Resend Verification Email (by email address)
+//
+// Resend the email verification link, identifying the account by email address. Unauthenticated (see issue 198): a self-registered user holds no token yet. Rate-limited per (ip, email) with an identical response for unknown, already-verified, and emailed addresses (anti-enumeration).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/verify-email/resend-by-email (the `PostApiVerifyEmailResendByEmail` operationId).
+func (c *ClientWithResponses) PostApiVerifyEmailResendByEmailWithResponse(ctx context.Context, body PostApiVerifyEmailResendByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*PostApiVerifyEmailResendByEmailResponse, error) {
+	rsp, err := c.PostApiVerifyEmailResendByEmail(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostApiVerifyEmailResendByEmailResponse(rsp)
+}
+
 // PostApiWechatLoginWithResponse WeChat OAuth2 Login
 //
 // Exchange WeChat authorization code for user information. This endpoint handles the server-side OAuth2 flow with WeChat Open Platform.
@@ -15296,6 +15482,22 @@ func ParsePostApiVerifyEmailResendResponse(rsp *http.Response) (*PostApiVerifyEm
 	}
 
 	response := &PostApiVerifyEmailResendResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParsePostApiVerifyEmailResendByEmailResponse parses an HTTP response from a PostApiVerifyEmailResendByEmailWithResponse call
+func ParsePostApiVerifyEmailResendByEmailResponse(rsp *http.Response) (*PostApiVerifyEmailResendByEmailResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostApiVerifyEmailResendByEmailResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

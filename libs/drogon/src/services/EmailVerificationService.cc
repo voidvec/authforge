@@ -1,5 +1,7 @@
 #include <fulla/drogon/services/EmailVerificationService.h>
 
+#include <fulla/common/utils/EmailNormalizer.h>
+#include <fulla/common/utils/RateLimiter.h>
 #include <fulla/storage/postgres/models/EmailVerificationTokens.h>
 #include <fulla/storage/postgres/models/Users.h>
 #include <fulla/drogon/utils/CryptoUtils.h>
@@ -265,6 +267,137 @@ void EmailVerificationService::resendVerification(
           );
       }
     );
+}
+
+void EmailVerificationService::notifyNewRegistration(const std::string &email)
+{
+    if (email.empty())
+        return;
+
+    auto db = ::drogon::app().getDbClient();
+    if (!db)
+        return;
+
+    // Registration stores the canonical (normalized) address; normalize the
+    // lookup key to match. Fire-and-forget: failures are logged, never
+    // surfaced -- the register response must not depend on email delivery.
+    const std::string normalized = fulla::common::utils::normalizeEmail(email);
+    try
+    {
+        Mapper<Users> mapper(db);
+        mapper.findOne(
+          Criteria(Users::Cols::_email, CompareOperator::EQ, normalized),
+          [normalized](const Users &user) {
+              // A freshly registered account is unverified by definition.
+              sendVerificationEmail(user.getValueOfId(), user.getValueOfEmail());
+          },
+          [](const DrogonDbException &e) {
+              LOG_ERROR << "notifyNewRegistration: user lookup failed for "
+                           "verification email: "
+                        << e.base().what();
+          }
+        );
+    }
+    catch (const std::exception &e)
+    {
+        LOG_ERROR << "notifyNewRegistration: Mapper construction failed: " << e.what();
+    }
+}
+
+void EmailVerificationService::requestVerificationByEmail(
+  const ::drogon::HttpRequestPtr &req,
+  ResponseCallback sharedCb
+)
+{
+    std::string email;
+    if (req->contentType() == ::drogon::CT_APPLICATION_JSON)
+    {
+        auto json = req->getJsonObject();
+        if (json)
+            email = json->get("email", "").asString();
+    }
+    else
+    {
+        email = req->getParameter("email");
+    }
+
+    if (email.empty())
+    {
+        respondError(
+          req, sharedCb, "VALIDATION_MISSING_REQUIRED_FIELD", "resend-by-email: email is required"
+        );
+        return;
+    }
+
+    // F-018 request-rate limiter: every accepted request counts toward the
+    // per-(ip, email) bucket, so email bombing through this unauthenticated
+    // endpoint is capped at the shared auth.rate_limit budget (30/min by
+    // default; prod Hodor adds a tighter per-ip sub_limit on top).
+    const std::string rlKey = req->getPeerAddr().toIp() + "|verify-resend:" + email;
+    auto retry = fulla::common::utils::RateLimiter::instance().checkThrottled(rlKey);
+    if (retry.count() > 0)
+    {
+        Json::Value body;
+        body["message"] = "Too many requests; please retry later";
+        auto resp = ::drogon::HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(::drogon::k429TooManyRequests);
+        resp->addHeader("Retry-After", std::to_string(retry.count()));
+        resp->addHeader("Cache-Control", "no-store");
+        (*sharedCb)(resp);
+        return;
+    }
+    fulla::common::utils::RateLimiter::instance().recordFailure(rlKey);
+
+    auto db = getDbOrRespond(req, sharedCb);
+    if (!db)
+        return;
+
+    const std::string normalized = fulla::common::utils::normalizeEmail(email);
+
+    // Anti-enumeration: one identical generic response for "no such user",
+    // "already verified", and "sent" -- the caller learns nothing about
+    // which emails exist.
+    auto respondGeneric = [sharedCb]() {
+        Json::Value json;
+        json["message"] =
+          "If the email exists and is unverified, a verification link has been sent";
+        auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
+        (*sharedCb)(resp);
+    };
+
+    try
+    {
+        Mapper<Users> mapper(db);
+        mapper.findOne(
+          Criteria(Users::Cols::_email, CompareOperator::EQ, normalized),
+          [respondGeneric](const Users &user) {
+              if (user.getValueOfEmailVerified())
+              {
+                  respondGeneric();
+                  return;
+              }
+              std::string stored = user.getValueOfEmail();
+              if (stored.empty())
+              {
+                  respondGeneric();
+                  return;
+              }
+              sendVerificationEmail(user.getValueOfId(), stored);
+              respondGeneric();
+          },
+          [respondGeneric](const DrogonDbException &e) {
+              // Lookup miss (unknown email) or DB failure -- both answer the
+              // generic response; failures are logged server-side only.
+              LOG_ERROR << "resend-by-email: user lookup failed: " << e.base().what();
+              respondGeneric();
+          }
+        );
+    }
+    catch (const std::exception &e)
+    {
+        LOG_ERROR << "resend-by-email: Mapper construction failed: " << e.what();
+        respondGeneric();
+    }
 }
 
 }  // namespace fulla::drogon::services
