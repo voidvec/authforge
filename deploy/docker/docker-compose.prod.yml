@@ -7,7 +7,7 @@
 # the local build with the same name). Schema migrations run through the
 # one-shot `migrate` service (profile "migrate"), not at app startup:
 #   docker compose -f docker-compose.prod.yml --env-file <your-env> \
-#     --profile migrate run --rm migrate
+#     --profile migrate run --rm --build migrate
 # The app itself keeps FULLA_AUTO_MIGRATE=false and only self-checks.
 # NOTE: the migrate service also carries a build: section so a fresh
 # deployment can migrate from LOCAL sources with --build even when the
@@ -154,7 +154,9 @@ services:
 
   # One-shot schema migration executor (Task 37). Not started by default:
   #   docker compose -f docker-compose.prod.yml --env-file .env.docker \
-  #     --profile migrate run --rm migrate
+  #     --profile migrate run --rm --build migrate
+  # (--build migrates from LOCAL sources; without it compose pulls the
+  # released image, which may predate unreleased migrations.)
   # Exit code 0 = schema up to date, 1 = failure (compose surfaces it).
   migrate:
     image: ghcr.io/voidvec/fulla-backend:${FULLA_VERSION:-latest}
