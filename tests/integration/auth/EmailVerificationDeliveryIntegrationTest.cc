@@ -24,6 +24,7 @@
 #include <drogon/drogon_test.h>
 #include <drogon/drogon.h>
 #include <drogon/HttpClient.h>
+#include <fulla/drogon/plugin/OAuth2Plugin.h>
 #include <fulla/drogon/utils/CryptoUtils.h>
 #include <fulla/storage/postgres/models/EmailVerificationTokens.h>
 #include <fulla/storage/postgres/models/Users.h>
@@ -84,6 +85,16 @@ bool serverReachable()
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
     return false;
+}
+
+// The CI aggregate runs this binary against a MEMORY-storage server (no
+// db_clients configured): app().getDbClient() returns a null client there
+// and any database-backed assertion would crash the whole aggregate. These
+// tests are postgres-backed by design -- skip cleanly in memory mode.
+bool postgresStorage()
+{
+    auto *plugin = app().getPlugin<OAuth2Plugin>();
+    return plugin != nullptr && plugin->getStorageType() != "memory";
 }
 
 // Registers a user over HTTP with the given email. Returns true on 200.
@@ -162,6 +173,11 @@ DROGON_TEST(Integration_P1_EmailVerification_RegistrationSendsVerificationEmail)
         return;
     }
     const std::string suffix = uniqueSuffix();
+    if (!postgresStorage())
+    {
+        LOG_INFO << "memory storage mode - skipping postgres-backed test";
+        return;
+    }
     const std::string username = "evreg" + suffix;
     const std::string email = "evreg" + suffix + "@example.com";
 
@@ -181,6 +197,11 @@ DROGON_TEST(Integration_P1_EmailVerification_ResendByEmail_Unauthenticated)
     const std::string suffix = uniqueSuffix();
     const std::string username = "evresend" + suffix;
     const std::string email = "evresend" + suffix + "@example.com";
+    if (!postgresStorage())
+    {
+        LOG_INFO << "memory storage mode - skipping postgres-backed test";
+        return;
+    }
     REQUIRE(registerUser(username, "EvResend9-Password!", email));
     REQUIRE(waitForTokenCount(email, 1));
 
@@ -207,6 +228,11 @@ DROGON_TEST(Integration_P1_EmailVerification_ResendByEmail_UnknownEmail_AntiEnum
     if (!serverReachable())
     {
         LOG_INFO << "server unreachable - skipping live HTTP test";
+        return;
+    }
+    if (!postgresStorage())
+    {
+        LOG_INFO << "memory storage mode - skipping postgres-backed test";
         return;
     }
     const std::string email = "nobody-ev" + uniqueSuffix() + "@example.com";
@@ -237,6 +263,11 @@ DROGON_TEST(Integration_P1_EmailVerification_VerifyTokenFlipsEmailVerified)
     const std::string suffix = uniqueSuffix();
     const std::string username = "evverify" + suffix;
     const std::string email = "evverify" + suffix + "@example.com";
+    if (!postgresStorage())
+    {
+        LOG_INFO << "memory storage mode - skipping postgres-backed test";
+        return;
+    }
     REQUIRE(registerUser(username, "EvVerify9-Password!", email));
 
     // Mint a known token directly (raw token is only knowable to the mail

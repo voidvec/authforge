@@ -7,6 +7,7 @@
 #include <fulla/drogon/utils/CryptoUtils.h>
 #include <fulla/drogon/utils/EmailService.h>
 #include <fulla/drogon/error/ErrorResponder.h>
+#include <fulla/drogon/plugin/OAuth2Plugin.h>
 
 #include <drogon/drogon.h>
 
@@ -65,6 +66,17 @@ void respondError(
 // namespace collision inside fulla::drogon::services.
 using namespace ::drogon::orm;
 using namespace ::drogon_model::fulla_db;
+
+// Memory storage mode has no database at all: app().getDbClient() would
+// return a null client (or assert in debug builds). Email verification is
+// persistence-backed by design, so every entry point below no-ops (or
+// answers generically) in that mode. Registration DOES reach these paths
+// in memory mode via notifyNewRegistration, so the guard is load-bearing.
+bool verificationStorageAvailable()
+{
+    auto *plugin = ::drogon::app().getPlugin<::OAuth2Plugin>();
+    return plugin != nullptr && plugin->getStorageType() != "memory";
+}
 
 // ---- internal helper ----
 
@@ -273,6 +285,8 @@ void EmailVerificationService::notifyNewRegistration(const std::string &email)
 {
     if (email.empty())
         return;
+    if (!verificationStorageAvailable())
+        return;
 
     auto db = ::drogon::app().getDbClient();
     if (!db)
@@ -347,6 +361,18 @@ void EmailVerificationService::requestVerificationByEmail(
         return;
     }
     fulla::common::utils::RateLimiter::instance().recordFailure(rlKey);
+
+    if (!verificationStorageAvailable())
+    {
+        // Memory mode: no persistence, so no token can be stored or
+        // verified. Answer the generic response (nothing is sent).
+        Json::Value json;
+        json["message"] =
+          "If the email exists and is unverified, a verification link has been sent";
+        auto resp = ::drogon::HttpResponse::newHttpJsonResponse(json);
+        (*sharedCb)(resp);
+        return;
+    }
 
     auto db = getDbOrRespond(req, sharedCb);
     if (!db)
