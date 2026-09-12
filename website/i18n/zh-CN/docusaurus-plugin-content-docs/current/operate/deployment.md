@@ -500,7 +500,7 @@ curl -k https://localhost/admin/
 | 基础镜像 | ubuntu:24.04 (minimal) |
 | 内部端口 | 5555 |
 | 访问路径 | `https://your-domain.com/api/*`, `/oauth2/*` |
-| 数据库迁移 | 启动时自动执行（FULLA_AUTO_MIGRATE=true） |
+| 数据库迁移 | 一次性 `migrate` 服务（compose profile `migrate`；`FULLA_AUTO_MIGRATE=false`） |
 
 ### 基础设施
 
@@ -539,7 +539,7 @@ curl -k https://localhost/admin/
 | `FULLA_VUE_REDIRECT_URI` | vue-client OAuth 回调 URI | config 中的 localhost 值 |
 | `FULLA_GOOGLE_REDIRECT_URI` | Google OAuth 回调 URI | config 中的 localhost 值 |
 | `FULLA_VUE_CLIENT_SECRET` | vue-client 密钥 | 123456 |
-| `FULLA_AUTO_MIGRATE` | 自动执行数据库迁移 | true |
+| `FULLA_AUTO_MIGRATE` | 自动执行数据库迁移 | false（改用一次性 `migrate` 服务） |
 | `DETAILED_VALIDATION_ERRORS` | 是否返回字段级校验错误（生产建议 false） | false |
 | `FULLA_GITHUB_CLIENT_ID` / `FULLA_GITHUB_CLIENT_SECRET` | GitHub OAuth（可选） | (空) |
 | `FULLA_GOOGLE_CLIENT_ID` / `FULLA_GOOGLE_CLIENT_SECRET` | Google OAuth（可选） | (空) |
@@ -583,7 +583,7 @@ curl -k https://localhost/admin/
 
 ## 数据库初始化
 
-首次部署时，后端会自动执行数据库迁移（`FULLA_AUTO_MIGRATE=true`），创建所有必要的表。但**不会自动创建种子数据**——需要手动创建管理员用户和 OAuth2 客户端。
+首次部署时，由一次性 `migrate` 服务创建所有必要的表（compose 栈保持 `FULLA_AUTO_MIGRATE=false`；在启动 postgres/redis 服务后执行 `docker compose -f docker-compose.prod.yml --env-file <your-env> --profile migrate run --rm --build migrate`——干净环境**必须带 `--build`**，否则 compose 会拉取已发布镜像，其中可能缺少你本地的新迁移）。但**不会自动创建种子数据**——需要手动创建管理员用户和 OAuth2 客户端。
 
 > `apps/server/seed/` 下的 `dev_*.sql` 文件使用硬编码密码和 localhost 回调地址，**不要在生产环境使用**。请按以下步骤操作。
 
@@ -646,7 +646,7 @@ ON CONFLICT (client_id) DO NOTHING;
 
 INSERT INTO oauth2_client_scopes (client_id, scope_name)
 SELECT 'vue-client', name FROM oauth2_scopes
-WHERE is_default = TRUE
+WHERE name IN ('openid', 'profile', 'email')
 ON CONFLICT (client_id, scope_name) DO NOTHING;
 
 -- 管理后台客户端（PUBLIC，PKCE）

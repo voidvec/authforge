@@ -501,7 +501,7 @@ curl -k https://localhost/admin/
 | Base image | ubuntu:24.04 (minimal) |
 | Internal port | 5555 |
 | Access path | `https://your-domain.com/api/*`, `/oauth2/*` |
-| Database migration | Executed automatically at startup (FULLA_AUTO_MIGRATE=true) |
+| Database migration | One-shot `migrate` service (compose profile `migrate`; `FULLA_AUTO_MIGRATE=false`) |
 
 ### Infrastructure
 
@@ -540,7 +540,7 @@ The backend overrides configuration-file values with environment variables (prec
 | `FULLA_VUE_REDIRECT_URI` | vue-client OAuth callback URI | localhost value from config |
 | `FULLA_GOOGLE_REDIRECT_URI` | Google OAuth callback URI | localhost value from config |
 | `FULLA_VUE_CLIENT_SECRET` | vue-client secret | 123456 |
-| `FULLA_AUTO_MIGRATE` | Run database migrations automatically | true |
+| `FULLA_AUTO_MIGRATE` | Run database migrations automatically | false (use the one-shot `migrate` service) |
 | `DETAILED_VALIDATION_ERRORS` | Whether to return field-level validation errors (false recommended in production) | false |
 | `FULLA_GITHUB_CLIENT_ID` / `FULLA_GITHUB_CLIENT_SECRET` | GitHub OAuth (optional) | (empty) |
 | `FULLA_GOOGLE_CLIENT_ID` / `FULLA_GOOGLE_CLIENT_SECRET` | Google OAuth (optional) | (empty) |
@@ -584,7 +584,7 @@ The frontend (the user-facing OAuth2Frontend) is configured through Vite environ
 
 ## Database initialization
 
-On first deployment the one-shot `migrate` service creates all required tables (the compose stack keeps `FULLA_AUTO_MIGRATE=false`; run `docker compose -f docker-compose.prod.yml --env-file <your-env> --profile migrate run --rm migrate` after `up` of the postgres/redis services). The **administrator account is bootstrapped automatically** on first start (see next step); OAuth2 clients are not — create them manually.
+On first deployment the one-shot `migrate` service creates all required tables (the compose stack keeps `FULLA_AUTO_MIGRATE=false`; run `docker compose -f docker-compose.prod.yml --env-file <your-env> --profile migrate run --rm --build migrate` after `up` of the postgres/redis services — `--build` is REQUIRED on a clean checkout, otherwise compose pulls the released image, which may predate your local migrations). The **administrator account is bootstrapped automatically** on first start (see next step); OAuth2 clients are not — create them manually.
 
 > The `dev_*.sql` files in `apps/server/seed/` use hard-coded passwords and localhost redirect URIs. **Do not use them in production.** Follow the steps below instead.
 
