@@ -584,7 +584,7 @@ The frontend (the user-facing OAuth2Frontend) is configured through Vite environ
 
 ## Database initialization
 
-On first deployment the backend runs database migrations automatically (`FULLA_AUTO_MIGRATE=true`), creating all required tables. The **administrator account is bootstrapped automatically** on first start (see next step); OAuth2 clients are not — create them manually.
+On first deployment the one-shot `migrate` service creates all required tables (the compose stack keeps `FULLA_AUTO_MIGRATE=false`; run `docker compose -f docker-compose.prod.yml --env-file <your-env> --profile migrate run --rm migrate` after `up` of the postgres/redis services). The **administrator account is bootstrapped automatically** on first start (see next step); OAuth2 clients are not — create them manually.
 
 > The `dev_*.sql` files in `apps/server/seed/` use hard-coded passwords and localhost redirect URIs. **Do not use them in production.** Follow the steps below instead.
 
@@ -657,7 +657,7 @@ ON CONFLICT (client_id) DO NOTHING;
 
 INSERT INTO oauth2_client_scopes (client_id, scope_name)
 SELECT 'vue-client', name FROM oauth2_scopes
-WHERE is_default = TRUE
+WHERE name IN ('openid', 'profile', 'email')
 ON CONFLICT (client_id, scope_name) DO NOTHING;
 
 -- Admin console client (PUBLIC, PKCE)
