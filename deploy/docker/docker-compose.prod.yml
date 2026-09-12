@@ -1,13 +1,20 @@
 # Production Docker Compose
-# Usage: cp .env.docker.example .env.docker && docker-compose -f docker-compose.prod.yml --env-file .env.docker up -d
+# Usage: create an env file (variable table in docs/operate/deployment.md),
+# then: docker compose -f docker-compose.prod.yml --env-file <your-env> up -d --build
 #
 # Task 37: services reference the versioned ghcr images published by
 # release.yml (set FULLA_VERSION to pin; `--build` still works and tags
 # the local build with the same name). Schema migrations run through the
 # one-shot `migrate` service (profile "migrate"), not at app startup:
-#   docker compose -f docker-compose.prod.yml --env-file .env.docker \
+#   docker compose -f docker-compose.prod.yml --env-file <your-env> \
 #     --profile migrate run --rm migrate
 # The app itself keeps FULLA_AUTO_MIGRATE=false and only self-checks.
+# NOTE: the migrate service also carries a build: section so a fresh
+# deployment can migrate from LOCAL sources with --build even when the
+# released ghcr image is unavailable (mirrored/offline hosts) or stale
+# relative to unreleased migrations — the WSL 2026-09-12 rehearsal hit
+# exactly that: `run --rm migrate` pulled the released image and silently
+# applied one migration fewer than the local sources ship.
 
 services:
   nginx:
@@ -113,6 +120,10 @@ services:
       # the app only self-checks the schema at startup.
       - FULLA_AUTO_MIGRATE=${FULLA_AUTO_MIGRATE:-false}
       - DETAILED_VALIDATION_ERRORS=${DETAILED_VALIDATION_ERRORS:-false}
+      # Optional: set the bootstrap admin's initial password explicitly;
+      # when empty AdminBootstrapper generates a random one and prints it
+      # ONCE to the container log (read it via `docker compose logs backend`).
+      - FULLA_BOOTSTRAP_ADMIN_PASSWORD=${FULLA_BOOTSTRAP_ADMIN_PASSWORD:-}
       # External auth (optional)
       - FULLA_GITHUB_CLIENT_ID=${FULLA_GITHUB_CLIENT_ID:-}
       - FULLA_GITHUB_CLIENT_SECRET=${FULLA_GITHUB_CLIENT_SECRET:-}
@@ -147,6 +158,10 @@ services:
   # Exit code 0 = schema up to date, 1 = failure (compose surfaces it).
   migrate:
     image: ghcr.io/voidvec/fulla-backend:${FULLA_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: backend-runtime
     profiles: ["migrate"]
     command: ["./fulla-server", "--migrate-only"]
     restart: "no"
